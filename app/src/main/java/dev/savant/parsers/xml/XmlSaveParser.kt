@@ -223,8 +223,8 @@ class XmlSaveParser @Inject constructor() : SaveParser {
         setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
         setFeature("http://xml.org/sax/features/external-general-entities", false)
         setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-        runCatching { setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "") }
-        runCatching { setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "") }
+        runCatching { setAttribute(AccessExternalDtd, "") }
+        runCatching { setAttribute(AccessExternalSchema, "") }
     }
 
     private fun decodePrefix(bytes: ByteArray): String {
