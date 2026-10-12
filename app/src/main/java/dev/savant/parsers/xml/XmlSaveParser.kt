@@ -76,8 +76,8 @@ class XmlSaveParser @Inject constructor() : SaveParser {
             val output = ByteArrayOutputStream()
             val transformer = TransformerFactory.newInstance().apply {
                 runCatching { setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true) }
-                runCatching { setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "") }
-                runCatching { setAttribute(XMLConstants.ACCESS_EXTERNAL_STYLESHEET, "") }
+                runCatching { setAttribute(AccessExternalDtd, "") }
+                runCatching { setAttribute(AccessExternalStylesheet, "") }
             }.newTransformer().apply {
                 setOutputProperty(OutputKeys.ENCODING, "UTF-8")
                 setOutputProperty(OutputKeys.INDENT, "no")
@@ -239,6 +239,9 @@ class XmlSaveParser @Inject constructor() : SaveParser {
     }
 
     private companion object {
+        const val AccessExternalDtd = "http://javax.xml.XMLConstants/property/accessExternalDTD"
+        const val AccessExternalSchema = "http://javax.xml.XMLConstants/property/accessExternalSchema"
+        const val AccessExternalStylesheet = "http://javax.xml.XMLConstants/property/accessExternalStylesheet"
         val XmlStart = Regex("^<[A-Za-z_:][^>]*>")
         val IntegerPattern = Regex("-?(0|[1-9][0-9]*)")
         val FloatPattern = Regex("-?(?:0|[1-9][0-9]*)\\.[0-9]+(?:[eE][+-]?[0-9]+)?|-?(?:0|[1-9][0-9]*)[eE][+-]?[0-9]+")

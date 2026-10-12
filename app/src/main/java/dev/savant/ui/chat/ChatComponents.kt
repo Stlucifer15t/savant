@@ -485,8 +485,7 @@ fun FieldRow(
                             EnterTransition.None togetherWith ExitTransition.None
                         } else {
                             (slideInVertically(tween(170)) { it / 2 } + fadeIn(tween(170))) togetherWith
-                                (slideOutVertically(tween(170)) { -it / 2 } + fadeOut(tween(120))) using
-                                SizeTransform(clip = false)
+                                (slideOutVertically(tween(170)) { -it / 2 } + fadeOut(tween(120))
                         }
                     },
                     label = "field value",
