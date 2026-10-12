@@ -1,0 +1,14 @@
+<resources>
+    <!--
+      Compose renders every screen; this theme only exists so the window has the right
+      background before the first frame and so the system bars stay transparent (edge to edge).
+    -->
+    <style name="Theme.Savant" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/savant_bg_dark</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+    </style>
+</resources>

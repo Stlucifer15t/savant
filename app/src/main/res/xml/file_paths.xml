@@ -1,0 +1,10 @@
+<paths>
+    <!-- Rebuilt save files staged for the share sheet. Never the user's original. -->
+    <cache-path
+        name="exports"
+        path="exports/" />
+    <!-- Session backups of imported originals. -->
+    <files-path
+        name="backups"
+        path="backups/" />
+</paths>

@@ -1,0 +1,7 @@
+<resources>
+    <!-- Launch surface. Compose owns the real palette; these only prevent a white/black flash. -->
+    <color name="savant_bg_dark">#0E0F11</color>
+    <color name="savant_bg_light">#F7F4EE</color>
+    <color name="savant_accent">#F2A33A</color>
+    <color name="ic_launcher_background">#101215</color>
+</resources>

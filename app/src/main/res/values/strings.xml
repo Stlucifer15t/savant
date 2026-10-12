@@ -1,0 +1,39 @@
+<resources>
+    <string name="app_name">Savant</string>
+
+    <!-- navigation -->
+    <string name="tab_chat">chat</string>
+    <string name="tab_files">files</string>
+    <string name="tab_formats">formats</string>
+    <string name="tab_finder">finder</string>
+    <string name="tab_settings">settings</string>
+
+    <!-- first launch -->
+    <string name="warning_title">before you start</string>
+    <string name="warning_body">savant edits save files for offline, single-player games.\n\nwriting to a save used by an online game, a multiplayer server or an account with anti-cheat can corrupt the save and can get the account banned.\n\nsavant never uploads a save file. nothing leaves the device unless you export it.</string>
+    <string name="warning_ack">understood</string>
+
+    <!-- chat -->
+    <string name="chat_empty_title">drop a save file</string>
+    <string name="chat_empty_body">json, xml, ini, .rpgsave, sqlite, raw binary\nattach with the clip icon or share a file to savant</string>
+    <string name="chat_input_hint">set gold to 999999, or ask about a field</string>
+    <string name="chat_attach">attach save file</string>
+    <string name="chat_send">send</string>
+
+    <!-- editing -->
+    <string name="diff_title">diff preview</string>
+    <string name="diff_apply">apply</string>
+    <string name="diff_cancel">cancel</string>
+    <string name="diff_revert_row">revert</string>
+    <string name="quick_max">MAX</string>
+    <string name="quick_zero">0</string>
+    <string name="quick_double">x2</string>
+
+    <!-- export -->
+    <string name="export_share">share</string>
+    <string name="export_save">save to folder</string>
+
+    <!-- errors -->
+    <string name="error_file_too_large">file is larger than the 50 mb limit</string>
+    <string name="error_read_failed">could not read that file</string>
+</resources>
