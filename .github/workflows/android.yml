@@ -12,15 +12,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
           cache: gradle
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
       - name: Unit tests and debug APK
-        run: ./gradlew testDebugUnitTest assembleDebug --stacktrace
+        id: gradle-build
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest assembleDebug --stacktrace 2>&1 | tee gradle-output.log
+      - name: Surface Gradle failures as annotations
+        if: failure() && steps.gradle-build.outcome == 'failure'
+        shell: python
+        run: |
+          from pathlib import Path
+          lines = Path("gradle-output.log").read_text(errors="replace").splitlines()
+          needles = ("e: ", "error: ", "FAILURE:", "What went wrong:", "Execution failed for task", "There were failing tests")
+          selected = [line.strip() for line in lines if any(needle in line for needle in needles)]
+          for line in selected[-40:]:
+              escaped = line.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::error title=Gradle build::{escaped}")
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
