@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "gameName": "Sample Unity Adventure",
+  "fileMatch": {
+    "extensions": ["xml", "plist"],
+    "rootElement": "playerPrefs"
+  },
+  "parser": "xml",
+  "mappings": [
+    {
+      "path": "/playerPrefs/entry[0]/#text",
+      "name": "Coins",
+      "type": "int",
+      "min": 0,
+      "max": 999999,
+      "category": "currency"
+    },
+    {
+      "path": "/playerPrefs/entry[1]/#text",
+      "name": "Chapter complete",
+      "type": "bool",
+      "category": "flags"
+    }
+  ],
+  "checksum": {
+    "method": "none"
+  }
+}

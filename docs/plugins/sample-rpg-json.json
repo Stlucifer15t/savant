@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "gameName": "Sample Quest",
+  "fileMatch": {
+    "extensions": ["json", "sav"],
+    "rootKeys": ["player", "inventory"]
+  },
+  "parser": "json",
+  "mappings": [
+    {
+      "path": "$.player.gold",
+      "name": "Gold",
+      "type": "int",
+      "min": 0,
+      "max": 9999999,
+      "category": "currency"
+    },
+    {
+      "path": "$.player.hp",
+      "name": "HP",
+      "type": "int",
+      "min": 0,
+      "max": 9999,
+      "category": "stats"
+    }
+  ],
+  "checksum": {
+    "method": "none"
+  }
+}
