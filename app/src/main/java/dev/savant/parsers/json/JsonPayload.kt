@@ -96,13 +96,30 @@ fun jsonOf(value: FieldValue?): Json = when (value) {
     is FieldValue.Real -> if (value.float32) Json.Num(value.value, value.value.toFloat().toString()) else Json.Num(value.value)
 }
 
-/** The field value a payload holds, using [type] to decide between text, number and boolean. */
-fun jsonToValue(json: Json?, type: dev.savant.domain.model.FieldType? = null): FieldValue = when (json) {
-    null, Json.Null -> FieldValue.Null
-    is Json.Bool -> FieldValue.Bool(json.value)
-    is Json.Str -> FieldValue.parse(json.value, type)
-    is Json.Num -> if (json.integral) FieldValue.Int64(json.asLong) else FieldValue.Real(json.value)
-    is Json.Arr, is Json.Obj -> FieldValue.Text(JsonPayload.write(json))
+/**
+ * The field value a payload holds.
+ *
+ * [type] is the type the *field* declares, and it is the only thing allowed to reinterpret a stored
+ * value: with no type, a string stays a string. Without that rule `"007"` comes back as the number
+ * 7 and `"true"` as a boolean, which is exactly the kind of quiet corruption a transcript must not
+ * have — history has to read back as what was written.
+ */
+fun jsonToValue(json: Json?, type: dev.savant.domain.model.FieldType? = null): FieldValue {
+    val textual = type == dev.savant.domain.model.FieldType.STRING || type == dev.savant.domain.model.FieldType.ENUM
+    return when (json) {
+        null, Json.Null -> FieldValue.Null
+        is Json.Bool -> if (textual) FieldValue.Text(json.value.toString()) else FieldValue.Bool(json.value)
+        is Json.Str -> when {
+            type == null || textual -> FieldValue.Text(json.value)
+            else -> FieldValue.parse(json.value, type)
+        }
+        is Json.Num -> when {
+            textual -> FieldValue.Text(json.raw)
+            json.integral -> FieldValue.Int64(json.asLong)
+            else -> FieldValue.Real(json.value)
+        }
+        is Json.Arr, is Json.Obj -> FieldValue.Text(JsonPayload.write(json))
+    }
 }
 
 /**

@@ -169,6 +169,7 @@ class RoomBackupStore @Inject constructor(
         db.backupDao().observe().first().forEach { row -> File(row.path).parentFile?.deleteRecursively() }
         db.backupDao().clear()
         root.deleteRecursively()
+        Unit
     }
 
     override suspend fun refresh() = withContext(io) { migration.run() }

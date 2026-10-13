@@ -66,6 +66,21 @@ object EntryKinds {
  */
 object EntryCodec {
 
+    /**
+     * One line for a search result.
+     *
+     * The search itself runs in sqlite over the body column; this only gives a row something to
+     * show when the interesting text lived in the payload instead.
+     */
+    fun snippet(stored: StoredEntry): String = when (stored.kind) {
+        EntryKinds.FIELDS -> stored.payload.let { payload ->
+            JsonPayload.readOrEmpty(payload).string("headline") ?: stored.body
+        }
+        EntryKinds.NOTICE -> JsonPayload.readOrEmpty(stored.payload).string("title") ?: stored.body
+        EntryKinds.DIFF -> stored.body.ifBlank { "diff" }
+        else -> stored.body.ifBlank { stored.kind }
+    }
+
     fun encode(entry: ChatEntry, sessionId: String, position: Int): StoredEntry {
         val (kind, role, body, payload, isError) = when (entry) {
             is TextEntry -> Quintet(

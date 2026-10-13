@@ -1,5 +1,6 @@
 package dev.savant.parsers.json
 
+import dev.savant.domain.model.FieldType
 import dev.savant.domain.model.FieldValue
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -80,11 +81,16 @@ class JsonPayloadTest {
     }
 
     @Test
-    fun `a number with a declared type comes back as that type`() {
-        // "999999" is text in the save, and must stay text in the payload.
-        val asText = jsonToValue(jsonOf(FieldValue.Text("999999")))
-        assertTrue(asText is FieldValue.Text)
-        assertEquals(FieldValue.Text("999999"), asText)
+    fun `a stored string stays a string unless the field says otherwise`() {
+        // Without this rule "007" reads back as 7 and "true" as a boolean.
+        assertEquals(FieldValue.Text("999999"), jsonToValue(jsonOf(FieldValue.Text("999999"))))
+        assertEquals(FieldValue.Text("007"), jsonToValue(Json.Str("007")))
+        assertEquals(FieldValue.Text("true"), jsonToValue(Json.Str("true")))
+
+        // A field that declares itself numeric or textual is obeyed.
+        assertEquals(FieldValue.Int64(42), jsonToValue(Json.Num(42.0, "42"), FieldType.INT32))
+        assertEquals(FieldValue.Text("42"), jsonToValue(Json.Num(42.0, "42"), FieldType.STRING))
+        assertEquals(FieldValue.Text("007"), jsonToValue(Json.Str("007"), FieldType.STRING))
     }
 
     @Test
