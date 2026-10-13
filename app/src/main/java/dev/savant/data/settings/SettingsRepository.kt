@@ -11,9 +11,15 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -27,13 +33,6 @@ private object Keys {
     val CONFIRM_BEFORE_APPLY = booleanPreferencesKey("confirm_before_apply")
     val SHOW_PARSE_LOG = booleanPreferencesKey("show_parse_log")
     val WARNING_ACCEPTED = booleanPreferencesKey("warning_accepted")
-    val PROVIDER_KIND = stringPreferencesKey("provider_kind")
-    val PROVIDER_LABEL = stringPreferencesKey("provider_label")
-    val BASE_URL = stringPreferencesKey("base_url")
-    val MODEL_NAME = stringPreferencesKey("model_name")
-    val TEMPERATURE = floatPreferencesKey("temperature")
-    val MAX_OUTPUT_TOKENS = intPreferencesKey("max_output_tokens")
-    val API_KEY_MASK = stringPreferencesKey("api_key_mask")
     val SEND_FIELD_VALUES = booleanPreferencesKey("send_field_values")
     val SEARCH_API_ENABLED = booleanPreferencesKey("search_api_enabled")
     val SEARCH_API_KEY_MASK = stringPreferencesKey("search_api_key_mask")
@@ -64,13 +63,6 @@ class SettingsRepository @Inject constructor(
                 confirmBeforeApply = prefs[Keys.CONFIRM_BEFORE_APPLY] ?: defaults.confirmBeforeApply,
                 showParseLog = prefs[Keys.SHOW_PARSE_LOG] ?: defaults.showParseLog,
                 warningAccepted = prefs[Keys.WARNING_ACCEPTED] ?: defaults.warningAccepted,
-                providerKind = prefs[Keys.PROVIDER_KIND] ?: defaults.providerKind,
-                providerLabel = prefs[Keys.PROVIDER_LABEL] ?: defaults.providerLabel,
-                baseUrl = prefs[Keys.BASE_URL] ?: defaults.baseUrl,
-                modelName = prefs[Keys.MODEL_NAME] ?: defaults.modelName,
-                temperature = prefs[Keys.TEMPERATURE] ?: defaults.temperature,
-                maxOutputTokens = prefs[Keys.MAX_OUTPUT_TOKENS] ?: defaults.maxOutputTokens,
-                apiKeyMask = prefs[Keys.API_KEY_MASK] ?: defaults.apiKeyMask,
                 sendFieldValues = prefs[Keys.SEND_FIELD_VALUES] ?: defaults.sendFieldValues,
                 searchApiEnabled = prefs[Keys.SEARCH_API_ENABLED] ?: defaults.searchApiEnabled,
                 searchApiKeyMask = prefs[Keys.SEARCH_API_KEY_MASK] ?: defaults.searchApiKeyMask,
@@ -81,6 +73,15 @@ class SettingsRepository @Inject constructor(
             )
         }
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * The settings as they are *right now*, for the two places that cannot wait for a collector:
+     * the request log switch and the assistant's privacy rules. Always populated before either is
+     * used because data store emits its first value on subscription.
+     */
+    val current: StateFlow<SavantSettings> = settings.stateIn(scope, SharingStarted.Eagerly, SavantSettings())
+
     suspend fun setTheme(theme: ThemeMode) = update { it[Keys.THEME] = theme.name }
     suspend fun setReducedMotion(enabled: Boolean) = update { it[Keys.REDUCED_MOTION] = enabled }
     suspend fun setMonoValues(enabled: Boolean) = update { it[Keys.MONO_VALUES] = enabled }
@@ -90,18 +91,6 @@ class SettingsRepository @Inject constructor(
     suspend fun setKeepBackups(enabled: Boolean) = update { it[Keys.KEEP_BACKUPS] = enabled }
     suspend fun setLogNetworkRequests(enabled: Boolean) = update { it[Keys.LOG_NETWORK] = enabled }
     suspend fun setSendFieldValues(enabled: Boolean) = update { it[Keys.SEND_FIELD_VALUES] = enabled }
-
-    suspend fun setProvider(kind: String, label: String, baseUrl: String, model: String) = update {
-        it[Keys.PROVIDER_KIND] = kind
-        it[Keys.PROVIDER_LABEL] = label
-        it[Keys.BASE_URL] = baseUrl
-        it[Keys.MODEL_NAME] = model
-    }
-
-    suspend fun setGeneration(temperature: Float, maxOutputTokens: Int) = update {
-        it[Keys.TEMPERATURE] = temperature
-        it[Keys.MAX_OUTPUT_TOKENS] = maxOutputTokens
-    }
 
     suspend fun resetToDefaults() {
         context.settingsStore.edit { it.clear() }

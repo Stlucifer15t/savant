@@ -1,38 +1,59 @@
 package dev.savant.data.settings
 
-import javax.inject.Inject
-import javax.inject.Singleton
-
 /**
  * API keys and tokens.
  *
- * Step 3 keeps them in memory for the process lifetime only: nothing is written to disk, which is
- * the safest possible default and is enough while the assistant is the on-device one. Step 6 swaps
- * this implementation for EncryptedSharedPreferences so a configured provider survives a restart,
- * and every UI surface keeps showing only [dev.savant.ai.AiPayload.redactKey] output.
+ * Two implementations: [KeystoreSecretStore] keeps them in a file encrypted with a key that only
+ * exists inside the android keystore, and [MemorySecretStore] holds them for the process lifetime
+ * and writes nothing. The second is the fallback when a device has no usable keystore — savant
+ * still works, and the settings screen says which one is in use rather than pretending.
+ *
+ * Every UI surface shows only [dev.savant.ai.AiPayload.redactKey] output, whatever is stored.
  */
-@Singleton
-class SecretStore @Inject constructor() {
+interface SecretStore {
 
-    private val values = mutableMapOf<String, String>()
+    fun put(id: String, secret: String)
 
-    fun put(id: String, secret: String) {
-        if (secret.isBlank()) values.remove(id) else values[id] = secret
-    }
+    fun get(id: String): String?
 
-    fun get(id: String): String? = values[id]
+    fun has(id: String): Boolean = !get(id).isNullOrBlank()
 
-    fun has(id: String): Boolean = !values[id].isNullOrBlank()
+    fun clear(id: String)
 
-    fun clear(id: String) {
-        values.remove(id)
-    }
+    fun clearAll()
 
-    fun clearAll() = values.clear()
+    /** `encrypted file`, or `memory only` when the keystore was unavailable. Shown in settings. */
+    val storageLabel: String
+
+    /** True when nothing is written to disk. */
+    val isVolatile: Boolean get() = true
 
     companion object {
+        /** The single provider key written by build steps before profiles existed. */
         const val PROVIDER_KEY = "provider.apiKey"
         const val SEARCH_KEY = "search.apiKey"
         const val MCP_PREFIX = "mcp."
+
+        fun providerKey(profileId: String): String = "provider.$profileId.apiKey"
     }
+}
+
+/** Process scoped, nothing on disk. The default before a key is entered, and the fallback after. */
+class MemorySecretStore(override val storageLabel: String = "memory only") : SecretStore {
+
+    private val values = mutableMapOf<String, String>()
+
+    override fun put(id: String, secret: String) {
+        if (secret.isBlank()) values.remove(id) else values[id] = secret
+    }
+
+    override fun get(id: String): String? = values[id]
+
+    override fun has(id: String): Boolean = !values[id].isNullOrBlank()
+
+    override fun clear(id: String) {
+        values.remove(id)
+    }
+
+    override fun clearAll() = values.clear()
 }

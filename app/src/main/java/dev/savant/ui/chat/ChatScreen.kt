@@ -178,6 +178,7 @@ fun ChatScreen(
             },
             onAttach = { pickFile.launch(arrayOf("*/*")) },
             onClose = viewModel::onCloseFile,
+            engine = if (state.remoteEngine) state.engineLabel else null,
         )
 
         Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
@@ -247,6 +248,15 @@ fun ChatScreen(
             )
         }
 
+        if (state.busyNote != null) {
+            Text(
+                text = state.busyNote!!,
+                style = SavantMono.path,
+                color = Savant.colors.textMuted,
+                modifier = Modifier.padding(horizontal = SavantDimens.gutter, vertical = 4.dp),
+            )
+        }
+
         ChatInputBar(
             text = state.input,
             enabled = !state.busy,
@@ -279,7 +289,11 @@ private fun EntryRow(
     when (entry) {
         is TextEntry -> when (entry.role) {
             ChatRole.USER -> UserBubble(text = entry.text)
-            ChatRole.ASSISTANT -> AssistantText(lines = entry.lines, isError = entry.isError)
+            ChatRole.ASSISTANT -> AssistantText(
+                lines = entry.lines,
+                isError = entry.isError,
+                pending = entry.partial,
+            )
         }
 
         is FileEntry -> FileChip(

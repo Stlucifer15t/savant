@@ -21,14 +21,11 @@ data class SavantSettings(
     val warningAccepted: Boolean = false,
 
     // ai provider (step 6)
-    val providerKind: String = "local",
-    val providerLabel: String = "on device",
-    val baseUrl: String = "",
-    val modelName: String = "",
-    val temperature: Float = 0.2f,
-    val maxOutputTokens: Int = 1024,
-    /** Never the key itself. Keys are held by [SecretStore]; this is only the masked echo. */
-    val apiKeyMask: String = "",
+    /**
+     * Per profile settings — the model, the endpoint, the temperature — live in
+     * [ProviderProfileRepository], not here: there is more than one of them and they change
+     * together. What stays is the rule that applies to all of them.
+     */
     val sendFieldValues: Boolean = true,
 
     // search + mcp (step 6 / 8)
@@ -40,9 +37,7 @@ data class SavantSettings(
     // data
     val keepBackups: Boolean = true,
     val logNetworkRequests: Boolean = false,
-) {
-    val isRemoteProvider: Boolean get() = providerKind != "local"
-}
+)
 
 enum class ThemeMode(val label: String) {
     SYSTEM("system"),

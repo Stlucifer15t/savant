@@ -32,6 +32,11 @@ data class TextEntry(
     override val atMillis: Long = System.currentTimeMillis(),
     /** Failure copy is muted-red-free: same accent, different first word. Kept for a11y. */
     val isError: Boolean = false,
+    /**
+     * True while a remote provider is still writing this answer. A partial entry is replaced in
+     * place and never stored: a transcript keeps what was said, not what was being typed.
+     */
+    val partial: Boolean = false,
 ) : ChatEntry {
     val text: String get() = lines.joinToString("\n")
 }

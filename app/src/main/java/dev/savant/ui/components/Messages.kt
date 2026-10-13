@@ -39,6 +39,8 @@ fun AssistantText(
     lines: List<String>,
     modifier: Modifier = Modifier,
     isError: Boolean = false,
+    /** True while a remote provider is still writing: the text is shown, but dimmed. */
+    pending: Boolean = false,
 ) {
     val colors = Savant.colors
     if (lines.isEmpty()) return
@@ -66,6 +68,7 @@ fun AssistantText(
                     style = if (index == 0) SavantTypography.bodyMedium else SavantMono.path,
                     color = when {
                         isError && index == 0 -> colors.negative
+                        index == 0 && pending -> colors.textMuted
                         index == 0 -> colors.text
                         else -> colors.textMuted
                     },

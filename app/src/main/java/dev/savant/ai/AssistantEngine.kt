@@ -29,6 +29,11 @@ data class AssistantInput(
     val text: String,
     val session: EditorSession?,
     val history: List<LlmMessage> = emptyList(),
+    /**
+     * Called with the answer so far while a remote provider streams it. The local parser never
+     * calls it; the chat only uses it to show the reply arriving instead of a frozen screen.
+     */
+    val onPartial: (String) -> Unit = {},
 )
 
 sealed interface AssistantReply {

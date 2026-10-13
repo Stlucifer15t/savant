@@ -7,9 +7,11 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.savant.ai.AssistantEngine
 import dev.savant.ai.AssistantInput
 import dev.savant.ai.AssistantReply
+import dev.savant.ai.LlmMessage
 import dev.savant.data.history.ChatHistoryRepository
 import dev.savant.data.history.NamedFieldRepository
 import dev.savant.data.session.OpenReport
+import dev.savant.data.settings.ProviderProfileRepository
 import dev.savant.data.session.SessionStore
 import dev.savant.data.settings.SavantSettings
 import dev.savant.data.settings.SettingsRepository
@@ -62,6 +64,10 @@ data class ChatUiState(
     /** Paths already changed in this session: their values render in the accent colour. */
     val changedPaths: Set<String> = emptySet(),
     val engineLabel: String = "on device",
+    /** True when the active engine sends the conversation to a provider. */
+    val remoteEngine: Boolean = false,
+    /** Shown above the input bar while a remote provider is answering. */
+    val busyNote: String? = null,
     /** True while the transcript on screen came out of the database, not the live session. */
     val restoredHistory: Boolean = false,
     val historyNote: String? = null,
@@ -96,6 +102,7 @@ class ChatViewModel @Inject constructor(
     private val files: SaveFileRepository,
     private val history: ChatHistoryRepository,
     private val namedFields: NamedFieldRepository,
+    private val profiles: ProviderProfileRepository,
 ) : ViewModel() {
 
     /** The session the transcript on screen belongs to, and where each entry sits in it. */
@@ -149,7 +156,9 @@ class ChatViewModel @Inject constructor(
                 }
             }
         }
-        mutate { it.copy(engineLabel = assistant.label) }
+        viewModelScope.launch {
+            profiles.profiles.collect { mutate { ui -> ui.copy(engineLabel = assistant.label, remoteEngine = assistant.isRemote) } }
+        }
         viewModelScope.launch { restoreLastTranscript() }
         viewModelScope.launch {
             namedFields.observe().collect { rows ->
@@ -222,19 +231,39 @@ class ChatViewModel @Inject constructor(
         if (text.isEmpty() || _state.value.busy) return
         mutate { it.copy(input = "") }
         setBusy(true)
+        // Context is taken before the new line goes in, so it is not sent twice.
+        val history = conversationHistory()
         append(TextEntry(newId(), ChatRole.USER, listOf(text)))
         viewModelScope.launch {
             try {
-                handle(text)
+                handle(text, history)
             } finally {
                 setBusy(false)
             }
         }
     }
 
-    private suspend fun handle(text: String) {
+    private suspend fun handle(text: String, history: List<LlmMessage>) {
         val session = sessions.session.value
-        when (val reply = assistant.respond(AssistantInput(text, session))) {
+        val streaming = java.util.concurrent.atomic.AtomicBoolean(false)
+        val streamId = newId()
+        if (assistant.isRemote) {
+            mutate { it.copy(busyNote = "asking ${assistant.label}…") }
+        }
+        val reply = try {
+            assistant.respond(
+                AssistantInput(
+                    text = text,
+                    session = session,
+                    history = history,
+                    onPartial = { soFar -> showPartial(streamId, streaming, soFar) },
+                ),
+            )
+        } finally {
+            if (streaming.get()) mutate { state -> state.copy(entries = state.entries.filterNot { it.id == streamId }) }
+            mutate { it.copy(busyNote = null) }
+        }
+        when (reply) {
             is AssistantReply.Text -> assistantText(reply.lines)
 
             is AssistantReply.Failure -> assistantText(reply.lines, isError = true)
@@ -655,9 +684,43 @@ class ChatViewModel @Inject constructor(
         _state.value = block(_state.value)
     }
 
+    /**
+     * Shows a remote answer while it is still being written.
+     *
+     * A transient entry that is replaced as text arrives and dropped when the real reply lands —
+     * it is never persisted, so a transcript never contains half a sentence.
+     */
+    private fun showPartial(id: String, streaming: java.util.concurrent.atomic.AtomicBoolean, text: String) {
+        if (text.isBlank()) return
+        viewModelScope.launch {
+            val entry = TextEntry(id = id, role = ChatRole.ASSISTANT, lines = listOf(text), partial = true)
+            if (streaming.compareAndSet(false, true)) {
+                mutate { it.copy(entries = it.entries + entry) }
+            } else {
+                mutate { state -> state.copy(entries = state.entries.map { if (it.id == id) entry else it }) }
+            }
+        }
+    }
+
+    /** The last few things said in this chat, as the model sees them. */
+    private fun conversationHistory(): List<LlmMessage> = _state.value.entries
+        .filterIsInstance<TextEntry>()
+        .filter { !it.partial }
+        .takeLast(MAX_HISTORY)
+        .map { entry ->
+            LlmMessage(
+                role = if (entry.role == ChatRole.USER) LlmMessage.Role.USER else LlmMessage.Role.ASSISTANT,
+                text = entry.text.take(MAX_HISTORY_CHARS),
+            )
+        }
+        // A history that starts with an answer reads as a reply to nothing.
+        .dropWhile { it.role == LlmMessage.Role.ASSISTANT }
+
     private fun newId(): String = UUID.randomUUID().toString().take(8)
 
     private companion object {
         const val MAX_WARNINGS = 5
+        const val MAX_HISTORY = 12
+        const val MAX_HISTORY_CHARS = 2000
     }
 }

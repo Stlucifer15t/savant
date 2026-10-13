@@ -39,6 +39,7 @@ fun ScreenTopBar(
     title: String,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    onBack: (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     val colors = Savant.colors
@@ -47,9 +48,16 @@ fun ScreenTopBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(52.dp)
-                .padding(start = SavantDimens.gutter, end = 6.dp),
+                .padding(start = if (onBack == null) SavantDimens.gutter else 2.dp, end = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (onBack != null) {
+                FlatIconButton(
+                    icon = SavantIcons.arrowLeft,
+                    contentDescription = "back",
+                    onClick = onBack,
+                )
+            }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title,
@@ -91,6 +99,8 @@ fun SessionTopBar(
     onAttach: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The active provider, or null while the deterministic on-device parser is answering. */
+    engine: String? = null,
 ) {
     val colors = Savant.colors
     Column(modifier = modifier.fillMaxWidth().background(colors.background)) {
@@ -122,6 +132,11 @@ fun SessionTopBar(
                     Spacer(Modifier.height(3.dp))
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         if (formatBadge != null) Tag(text = formatBadge, color = colors.text, emphasis = true)
+                        if (engine != null) {
+                            // A remote engine is named here because the header is the one place the
+                            // user always sees while typing at a save file.
+                            Tag(text = engine, color = colors.accent)
+                        }
                         StatusDot(
                             color = if (backedUp) colors.positive else colors.caution,
                             label = if (backedUp) "backed up" else "no backup",

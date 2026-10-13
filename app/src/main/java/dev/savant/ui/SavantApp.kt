@@ -35,6 +35,8 @@ import dev.savant.ui.finder.FinderScreen
 import dev.savant.ui.formats.FormatsScreen
 import dev.savant.ui.icons.SavantIcon
 import dev.savant.ui.icons.SavantIcons
+import dev.savant.ui.settings.NetworkScreen
+import dev.savant.ui.settings.ProvidersScreen
 import dev.savant.ui.settings.SettingsScreen
 import dev.savant.ui.theme.Savant
 import dev.savant.ui.theme.SavantMono
@@ -50,6 +52,23 @@ enum class SavantTab(
     FORMATS("formats", "formats", SavantIcons.layers),
     FINDER("finder", "finder", SavantIcons.search),
     SETTINGS("settings", "settings", SavantIcons.settings),
+}
+
+/**
+ * The two settings pages that are not tabs.
+ *
+ * They are pushed onto the same stack as the tabs so the back gesture works, and the bottom bar
+ * keeps `settings` lit while they are open — a sub-page of settings is still settings.
+ */
+object SavantRoutes {
+    const val PROVIDERS = "settings/providers"
+    const val NETWORK = "settings/network"
+
+    /** The tab that owns a route, so the bar stays lit on a pushed page. */
+    fun tabOf(route: String?): SavantTab? = when (route) {
+        PROVIDERS, NETWORK -> SavantTab.SETTINGS
+        else -> SavantTab.entries.firstOrNull { it.route == route }
+    }
 }
 
 /**
@@ -96,11 +115,20 @@ fun SavantApp(
                 FinderScreen(onOpenChat = { navController.goToTab(SavantTab.CHAT) })
             }
             composable(SavantTab.SETTINGS.route) {
-                SettingsScreen()
+                SettingsScreen(
+                    onOpenProviders = { navController.navigate(SavantRoutes.PROVIDERS) },
+                    onOpenNetwork = { navController.navigate(SavantRoutes.NETWORK) },
+                )
+            }
+            composable(SavantRoutes.PROVIDERS) {
+                ProvidersScreen(onBack = { navController.popBackStack() })
+            }
+            composable(SavantRoutes.NETWORK) {
+                NetworkScreen(onBack = { navController.popBackStack() })
             }
         }
         BottomTabBar(
-            currentRoute = currentRoute,
+            currentTab = SavantRoutes.tabOf(currentRoute),
             onSelect = { tab -> navController.goToTab(tab) },
         )
     }
@@ -123,7 +151,7 @@ private fun NavHostController.goToTab(tab: SavantTab) {
  */
 @Composable
 private fun BottomTabBar(
-    currentRoute: String?,
+    currentTab: SavantTab?,
     onSelect: (SavantTab) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -140,7 +168,7 @@ private fun BottomTabBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SavantTab.entries.forEach { tab ->
-                val selected = tab.route == currentRoute
+                val selected = tab == currentTab
                 Column(
                     modifier = Modifier
                         .weight(1f)

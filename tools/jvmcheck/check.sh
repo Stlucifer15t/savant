@@ -33,6 +33,8 @@ main_sources() {
        "$ROOT/app/src/main/java/dev/savant/ai" -name '*.kt'
   echo "$ROOT/app/src/main/java/dev/savant/data/history/EntryCodec.kt"
   echo "$ROOT/app/src/main/java/dev/savant/data/settings/SavantSettings.kt"
+  echo "$ROOT/app/src/main/java/dev/savant/data/settings/SecretStore.kt"
+  echo "$ROOT/app/src/main/java/dev/savant/data/settings/SecretVault.kt"
 }
 
 rm -rf "$OUT/classes"

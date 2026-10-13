@@ -33,7 +33,11 @@ import dev.savant.domain.model.SaveFormat
 import dev.savant.domain.model.formatBytes
 import dev.savant.ui.components.GhostButton
 import dev.savant.ui.components.Hairline
+import dev.savant.ui.components.ChoiceRow
 import dev.savant.ui.components.SavantPanel
+import dev.savant.ui.components.Section
+import dev.savant.ui.components.SwitchRow
+import dev.savant.ui.components.ValueRow
 import dev.savant.ui.components.ScreenTopBar
 import dev.savant.ui.components.SectionLabel
 import dev.savant.ui.components.Tag
@@ -43,7 +47,7 @@ import dev.savant.ui.theme.SavantMono
 import dev.savant.ui.theme.SavantTypography
 
 /** Version shown in the about block; kept next to the gradle `versionName`. */
-private const val VERSION = "0.1.0 · build step 3"
+private const val VERSION = "0.1.0 · build step 6"
 
 /**
  * Settings, grouped the way the work is grouped: how it looks, how edits are confirmed, where the
@@ -52,6 +56,8 @@ private const val VERSION = "0.1.0 · build step 3"
 @Composable
 fun SettingsScreen(
     modifier: Modifier = Modifier,
+    onOpenProviders: () -> Unit = {},
+    onOpenNetwork: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -129,14 +135,22 @@ fun SettingsScreen(
                 SavantPanel(modifier = Modifier.panelPadding()) {
                     ValueRow(
                         title = "engine",
-                        value = settings.providerLabel,
-                        subtitle = "on device: a deterministic command parser, no key, no network",
+                        value = state.engineLabel,
+                        subtitle = if (state.isRemote) {
+                            "a remote provider answers here; it can propose edits and nothing else"
+                        } else {
+                            "on device: a deterministic command parser, no key, no network"
+                        },
                     )
                     Hairline()
                     ValueRow(
-                        title = "remote providers",
-                        value = "step 6",
-                        subtitle = "openai compatible, anthropic, google and local http endpoints, with profiles",
+                        title = "profiles",
+                        value = when (state.providerCount) {
+                            0 -> "none yet"
+                            1 -> "1 configured"
+                            else -> "${state.providerCount} configured"
+                        },
+                        subtitle = "a provider, a model and a key — the key is stored separately",
                         muted = true,
                     )
                     Hairline()
@@ -153,6 +167,13 @@ fun SettingsScreen(
                         subtitle = "over 200 kb only a field summary is sent, never the file",
                         muted = true,
                     )
+                    Hairline()
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        GhostButton(text = "manage providers", onClick = onOpenProviders)
+                    }
                 }
             }
 
@@ -167,17 +188,28 @@ fun SettingsScreen(
                     Hairline()
                     SwitchRow(
                         title = "log network requests",
-                        subtitle = "keys are redacted to their last four characters",
+                        subtitle = "keeps the last 60 requests in memory for you to read; off writes nothing",
                         checked = settings.logNetworkRequests,
                         onChange = viewModel::onLogNetwork,
                     )
                     Hairline()
                     ValueRow(
                         title = "api keys",
-                        value = "memory only",
-                        subtitle = "encrypted storage arrives with the provider settings in step 6",
+                        value = state.keyStorage,
+                        subtitle = if (state.keyStorage == "memory only") {
+                            "this device had no usable keystore, so keys are re-entered each launch"
+                        } else {
+                            "never written to a profile, a backup or a log — only the last four characters are shown"
+                        },
                         muted = true,
                     )
+                    Hairline()
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        GhostButton(text = "view network activity", onClick = onOpenNetwork)
+                    }
                 }
             }
 
@@ -253,130 +285,3 @@ fun SettingsScreen(
 private fun Modifier.panelPadding(): Modifier = this
     .fillMaxWidth()
     .padding(horizontal = SavantDimens.gutter)
-
-@Composable
-private fun Section(title: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = SavantDimens.gutter, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        SectionLabel(text = title)
-        Spacer(Modifier.weight(1f))
-    }
-}
-
-@Composable
-private fun SwitchRow(
-    title: String,
-    subtitle: String?,
-    checked: Boolean,
-    onChange: (Boolean) -> Unit,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-) {
-    val colors = Savant.colors
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(enabled = enabled, onClick = { onChange(!checked) })
-            .padding(horizontal = 12.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = SavantTypography.bodyMedium,
-                color = if (enabled) colors.text else colors.textFaint,
-            )
-            if (subtitle != null) {
-                Text(
-                    text = subtitle,
-                    style = SavantMono.path,
-                    color = colors.textMuted,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        Spacer(Modifier.width(10.dp))
-        Switch(
-            checked = checked,
-            onCheckedChange = onChange,
-            enabled = enabled,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = colors.onAccent,
-                checkedTrackColor = colors.accent,
-                checkedBorderColor = colors.accent,
-                uncheckedThumbColor = colors.textMuted,
-                uncheckedTrackColor = colors.surfaceRaised,
-                uncheckedBorderColor = colors.border,
-                disabledCheckedThumbColor = colors.onAccent.copy(alpha = 0.4f),
-                disabledCheckedTrackColor = colors.accent.copy(alpha = 0.3f),
-                disabledUncheckedThumbColor = colors.textFaint,
-                disabledUncheckedTrackColor = colors.surfaceRaised,
-            ),
-        )
-    }
-}
-
-@Composable
-private fun ValueRow(
-    title: String,
-    value: String,
-    subtitle: String?,
-    modifier: Modifier = Modifier,
-    muted: Boolean = false,
-) {
-    val colors = Savant.colors
-    Row(
-        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(text = title, style = SavantTypography.bodyMedium, color = colors.text)
-            if (subtitle != null) {
-                Text(
-                    text = subtitle,
-                    style = SavantMono.path,
-                    color = colors.textMuted,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        Spacer(Modifier.width(10.dp))
-        Tag(text = value, color = if (muted) colors.textFaint else colors.text, emphasis = !muted)
-    }
-}
-
-@Composable
-private fun ChoiceRow(
-    title: String,
-    options: List<String>,
-    selected: String,
-    onSelect: (String) -> Unit,
-) {
-    val colors = Savant.colors
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 11.dp)) {
-        Text(text = title, style = SavantTypography.bodyMedium, color = colors.text)
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            options.forEach { option ->
-                val isSelected = option == selected
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(if (isSelected) colors.accentDim else colors.surfaceRaised)
-                        .clickable { onSelect(option) }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                ) {
-                    Text(
-                        text = option,
-                        style = SavantMono.value,
-                        color = if (isSelected) colors.accent else colors.textMuted,
-                    )
-                }
-            }
-        }
-    }
-}

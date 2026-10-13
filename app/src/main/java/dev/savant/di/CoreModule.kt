@@ -4,8 +4,6 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
-import dev.savant.ai.AssistantEngine
-import dev.savant.ai.LocalAssistant
 import dev.savant.ai.ToolExecutor
 import dev.savant.domain.parser.ExportVerifier
 import dev.savant.domain.parser.ParserRegistry
@@ -60,12 +58,4 @@ object CoreModule {
     @Provides
     @Singleton
     fun toolExecutor(editor: SaveEditor): ToolExecutor = ToolExecutor(editor)
-
-    /**
-     * The on-device assistant. Step 6 replaces this binding with a provider-backed engine that
-     * talks to an LLM and routes tool calls through the very same [ToolExecutor].
-     */
-    @Provides
-    @Singleton
-    fun assistantEngine(executor: ToolExecutor): AssistantEngine = LocalAssistant(executor)
 }
