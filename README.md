@@ -21,7 +21,7 @@ byte.
 | 3 | edit flow, diff preview, rebuild + verify + export | **done** |
 | 4 | room database: history, sessions, search | **done** |
 | 5 | value finder across two saves, typed binary scanner | **done** |
-| 6 | ai providers, profiles, privacy controls | planned |
+| 6 | ai providers, profiles, privacy controls | **done** |
 | 7 | plugin runtime: import/export game definitions | planned |
 | 8 | mcp connectors, web search, fetch | planned |
 | 9 | lz-string / rpgsave, sqlite, ini, unity plist | planned |
@@ -112,8 +112,8 @@ backups → restore reopens it in one tap.
   to the chat. **compare saves** takes two saves of the same game and ranks every typed value that
   moved. **scan bytes** takes one file and a value you know is in it, and lists every offset that
   holds it. the byte modes need no parser, and a candidate can be named.
-- **settings** — appearance, editing behaviour, ai provider (inert until step 6), privacy, data,
-  about.
+- **settings** — appearance, editing behaviour, providers (profiles, keys, endpoint verdict, test
+  connection), privacy, network log, data, about.
 
 ---
 
@@ -124,13 +124,17 @@ app/src/main/java/dev/savant/
 ├── MainActivity.kt          one activity, edge to edge, share-intent handoff
 ├── MainViewModel.kt         theme + pending share uri
 ├── SavantApplication.kt     @HiltAndroidApp
-├── ai/                      assistant contract, tools, tool executor, local assistant
+├── ai/                      assistant contract, tools, tool executor, local assistant,
+│   │                        system prompt, remote tool loop, the selecting engine
+│   └── provider/            three wire dialects, http model, network policy, profile codec
 ├── codecs/                  CodecStrategy, ChecksumSpec, ByteRangeSpec
 ├── data/
+│   ├── ai/                  NetworkLog, UrlConnectionTransport
 │   ├── db/                  room entities, daos, SavantDatabase (schema in app/schemas)
 │   ├── history/             ChatHistoryRepository, EntryCodec, NamedFieldRepository
 │   ├── session/             SessionStore — the one open save, shared by every screen
-│   ├── settings/            SavantSettings, SettingsRepository (DataStore), SecretStore
+│   ├── settings/            SavantSettings, SettingsRepository, ProfileStore, SecretStore +
+│   │                        EncryptedSecretStore (keystore backed)
 │   └── storage/             SaveFileRepository (SAF), BackupStore + ImportIndex, room stores
 ├── di/                      Hilt modules + dispatcher qualifiers
 ├── domain/
@@ -286,14 +290,21 @@ raw bytes or hex text, optionally truncated. `apply` recomputes and writes; `mat
 ## ai layer
 
 `AssistantEngine` is the provider-agnostic contract: `respond(AssistantInput)` returns either
-`Text`, `Proposal(edits, requestExport)` or `Failure`. two implementations are planned; one exists.
+`Text`, `Proposal(edits, requestExport)` or `Failure`. Three implementations exist, and the app
+injects the one that chooses between the other two.
 
-- `LocalAssistant` (today) — a deterministic command parser in front of the tool executor. no key,
-  no network, no model. it understands `set x to y`, `x = y`, `max all stats`, `zero flags`,
+- `LocalAssistant` — the default. a deterministic command parser in front of the tool executor: no
+  key, no network, no model. it understands `set x to y`, `x = y`, `max all stats`, `zero flags`,
   `double gold`, `add 10 to strength`, `unlock tutorialdone`, `search hp`, `what is gold`,
   `explain v_0042`, `undo`, `export`, `list fields`.
-- a provider-backed engine (step 6) — same contract, same tools, `isRemote = true`, keys in
-  encrypted storage, request logging with keys redacted to their last four characters.
+- `RemoteAssistant` — a tool loop over an `LlmClient`: the model gets the system prompt, the
+  conversation and the eight tools; when it answers with tool calls, each one runs through the same
+  `ToolExecutor` and the result goes back as a tool turn. bounded at four rounds, so a model that
+  keeps calling tools without answering is stopped and told so.
+- `SelectingAssistant` — what everything else injects. on device until a profile is configured and
+  usable. a profile missing its model or its key does **not** silently fall back: it says what is
+  missing, because a user who configured a provider and then gets on-device answers cannot tell the
+  difference.
 
 the eight tools, in `ai/Tools.kt`:
 
@@ -312,6 +323,51 @@ the eight tools, in `ai/Tools.kt`:
 `FieldEdit`s — the diff preview is the gate for a model exactly as it is for a tap. `AiPayload`
 handles the privacy rules: over 200 kb only a trimmed field summary is sent, long text values are
 dropped, and keys are redacted everywhere.
+
+---
+
+## providers and privacy
+
+Three wire dialects, one contract. `ProviderProtocol` owns the endpoint, the auth header, the request
+shape and the way an answer — including a tool call — comes back:
+
+| provider kind | dialect | endpoint | auth |
+| --- | --- | --- | --- |
+| `openai` | openai chat completions | `/chat/completions` | `authorization: Bearer` |
+| `openrouter` | the same, plus attribution headers | `/chat/completions` | `authorization: Bearer` |
+| `custom` | the same — llama.cpp, ollama's openai endpoint, vllm, lm studio, any gateway | your base url | `authorization: Bearer` |
+| `claude` | anthropic messages | `/messages` | `x-api-key` + `anthropic-version` |
+| `gemini` | google generateContent | `/models/<model>:generateContent` | `x-goog-api-key` header, never a query param |
+
+Each is a pure function over data, which is why the request and response shapes are unit tested
+without a socket. The dialect differences that matter are handled inside them: anthropic wants the
+system prompt top level and a tool result inside a *user* turn; gemini puts the model in the url, has
+no tool call ids (savant synthesises one) and matches results by name.
+
+**profiles** are shapes, not secrets: name, kind, base url, model, temperature, token limit. They live
+as one json document in a DataStore file (`ProfileCodec`, pure jvm, round trip tested); the active one
+is mirrored into settings so no screen can disagree with the code that makes the call. Generation
+settings come from the profile, not from the caller, so one row in settings decides temperature.
+
+**keys** live in `EncryptedSharedPreferences` behind a keystore `MasterKey` — values AES-256-GCM, and
+preference *names* AES-256-SIV, so even the list of what is stored is not readable in the xml. Each
+profile has its own key under its id, `allowBackup` is off in the manifest, the key field in the ui
+starts blank and never reads a stored key back, and the only echo anywhere is `****abcd`. If the
+keystore refuses (it does happen, after an os update or in some work profiles), the key stays in
+memory for the process and settings says "memory only" instead of pretending.
+
+**cleartext** is refused unless it points at the phone's own network. Android's network security
+config cannot express "private ip ranges", so the platform is told cleartext is permitted and the real
+gate is `NetworkPolicy`, in code, with tests: https is fine, http to loopback, link local, `10/8`,
+`192.168/16`, `172.16/12` or the emulator's `10.0.2.2` is allowed and flagged, and http to anything
+else is refused with the reason shown in the ui.
+
+**the network log** is opt-in, in memory, capped at 100 entries, and holds the shape of a call —
+method, url without its query string, status, latency, byte counts, token counts, `****abcd`, and a
+cleartext flag. It never holds a prompt, a field name, a value or a key.
+
+**test connection** is one `GET` to the provider's model list. It is the only call savant makes that
+carries no save data at all, which is why it is safe to press before trusting a profile with a file.
 
 ---
 
@@ -398,7 +454,7 @@ mapping — so the work done here is not thrown away when the format gets a real
 ./gradlew :app:testDebugUnitTest
 ```
 
-179 tests, pure jvm, no robolectric and no android APIs:
+221 tests, pure jvm, no robolectric and no android APIs:
 
 - `domain/model/FieldModelTest` — paths, quoting, value parsing and formatting, types, categories,
   validation, quick values, tree search and normalisation.
@@ -423,6 +479,16 @@ mapping — so the work done here is not thrown away when the format gets a real
 - `parsers/json/JsonPayloadTest` — savant's own json: compact output, integers staying integers,
   string escaping, non-ascii text, tolerant accessors, and the rule that a stored string stays a
   string unless the field declares a type.
+- `ai/provider/ProviderProtocolTest` — the three dialects: endpoints, auth headers, request bodies
+  (model, messages, system prompt placement, tool schemas with required parameters), tool calls and
+  tool results in both directions, response parsing for text and tool use, provider errors becoming
+  error responses rather than exceptions, url joining for a custom base, pings, argument flattening
+  and stop reason mapping.
+- `ai/RemoteAssistantTest` — the tool loop against a fake client and a fake transport: a text answer,
+  a tool call with no file open, the system prompt's rules, provider errors, refusals, a transport
+  that throws, the bounded loop, cleartext refused before anything is sent, cleartext allowed to a
+  local box, the log carrying the shape and not the contents, generation settings coming from the
+  profile, the network policy, and the profile codec.
 - `domain/finder/BinaryValuesTest` — typed reads in both byte orders, sign extension for narrow
   integers, float and double windows, windows that do not fit, offset and hex formatting, and the
   two shape tests ranking depends on: printable text, and no zero bytes.
@@ -542,6 +608,19 @@ reasonable choices made without asking, so they are written down:
 19. **float readings are judged on both sides of the change.** four bytes of a small integer read as
     a little endian float32 come out as a denormal (120 is 1.6e-43), and no game stores one on
     purpose. without that rule a float misreading of the gold counter outranked the gold counter.
+20. **no http client dependency.** savant makes a handful of json posts per turn, so the transport is
+    `HttpURLConnection` behind a one method interface. that keeps the pinned dependency set small and
+    the whole provider layer testable against a fake.
+21. **a protocol is data in, data out.** `ProviderProtocol` builds an `HttpCall` and reads an
+    `HttpResult`, with no i/o of its own, so the request and response shapes of three providers are
+    unit tests rather than things discovered against a live api at 2am.
+22. **a half configured profile fails loudly.** falling back to the on device engine when a key is
+    missing would be kinder to the code and worse for the person: they configured a provider, asked a
+    question, and got an answer from something else. savant says what is missing instead.
+23. **the cleartext gate lives in code, not in the platform config.** android can allow or forbid
+    cleartext per *domain*, and a local model box is an ip address, not a domain. so the platform is
+    told cleartext is permitted and `NetworkPolicy` refuses every http url that is not on the phone's
+    own network — a rule with tests, rather than a config nobody can express.
 
 ---
 
@@ -564,7 +643,12 @@ reasonable choices made without asking, so they are written down:
   field values are not stored.
 - a restored transcript is read only. its export card keeps the verification verdict but not the
   bytes, so share and save are off until an edit rebuilds the file.
-- api keys are still in memory only; encrypted storage arrives with the provider work in step 6.
+- a provider turn is one request and one response: no streaming. the profile's `streaming` flag is
+  stored and not surfaced, because a toggle that does nothing is worse than no toggle.
+- a provider is only as good as its tool calling. a model that answers in prose instead of calling
+  `set_field` gets a text reply and no edits; savant does not parse edits out of prose, because a
+  guessed path is worse than no answer.
+- mcp connectors, `web_search` and `fetch_url` are step 8; the settings rows for them are still inert.
 - `Android/data` is unreachable on android 11+ without extra privileges; share the file in instead.
   an optional shizuku path is a later decision, not a plan.
 
