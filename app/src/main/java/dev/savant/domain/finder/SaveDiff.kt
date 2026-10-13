@@ -46,6 +46,20 @@ data class DiffReport(
 object SaveDiff {
 
     /**
+     * Best first; ties break on offset, then on the type's declaration order, so the same two files
+     * always produce the same list. `i32` before `u32` is not a claim about the save — it is just a
+     * stable answer instead of one that depends on set iteration.
+     */
+    private val CANDIDATE_ORDER: Comparator<Candidate> =
+        compareByDescending<Candidate> { it.score }.thenBy { it.offset }.thenBy { it.type.ordinal }
+
+    /** Below this a float is a denormal, which no game stores on purpose. */
+    private const val DENORMAL_FLOOR = 1e-6
+
+    /** Above this a float is a bit pattern being misread, not a hit points value. */
+    private const val MAX_PLAUSIBLE = 1_000_000.0
+
+    /**
      * Contiguous stretches where the two files differ.
      *
      * Compared up to the shorter length: if a save grew, the tail is new data and there is no
@@ -124,7 +138,7 @@ object SaveDiff {
         }
 
         val ranked = found
-            .sortedWith(compareByDescending<Candidate> { it.score }.thenBy { it.offset })
+            .sortedWith(CANDIDATE_ORDER)
             .take(spec.limit)
         val truncated = stopped || found.size > spec.limit
 
@@ -184,7 +198,7 @@ object SaveDiff {
                 }
             }
         }
-        return found.sortedWith(compareByDescending<Candidate> { it.score }.thenBy { it.offset })
+        return found.sortedWith(CANDIDATE_ORDER)
     }
 
     /**
@@ -217,7 +231,7 @@ object SaveDiff {
                     .copy(before = candidate.after, after = value)
             }
         }
-        return kept.sortedWith(compareByDescending<Candidate> { it.score }.thenBy { it.offset })
+        return kept.sortedWith(CANDIDATE_ORDER)
     }
 
     /** How many candidates a third save removed, for the log line. */
@@ -323,20 +337,35 @@ object SaveDiff {
             }
 
             is FieldValue.Real -> {
+                // Both sides are judged: a float field does not hold 1.6e-43 before an edit and
+                // 0.55 after it, and those are exactly the readings you get when four bytes of a
+                // small integer are misread as a float.
                 val value = after.value
-                if (!value.isFinite()) {
-                    score -= 0.30f
-                    reasons += "not a finite number"
-                } else if (abs(value) <= 1_000_000.0) {
-                    score += 0.08f
-                    reasons += "plausible magnitude"
-                    if (type == FieldType.FLOAT && value != 0.0 && abs(value) < 1.0) {
-                        score += 0.04f
-                        reasons += "ratio sized float"
+                val sides = listOfNotNull(value, (before as? FieldValue.Real)?.value)
+                when {
+                    sides.any { !it.isFinite() } -> {
+                        score -= 0.30f
+                        reasons += "not a finite number"
                     }
-                } else {
-                    score -= 0.20f
-                    reasons += "implausible magnitude"
+
+                    sides.any { it != 0.0 && abs(it) < DENORMAL_FLOOR } -> {
+                        score -= 0.30f
+                        reasons += "denormal sized float"
+                    }
+
+                    sides.any { abs(it) > MAX_PLAUSIBLE } -> {
+                        score -= 0.20f
+                        reasons += "implausible magnitude"
+                    }
+
+                    else -> {
+                        score += 0.08f
+                        reasons += "plausible magnitude"
+                        if (type == FieldType.FLOAT && value != 0.0 && abs(value) < 1.0) {
+                            score += 0.04f
+                            reasons += "ratio sized float"
+                        }
+                    }
                 }
             }
 

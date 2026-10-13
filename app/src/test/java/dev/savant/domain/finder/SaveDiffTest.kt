@@ -155,6 +155,18 @@ class SaveDiffTest {
     }
 
     @Test
+    fun aFloatReadingOfAnIntegerFieldIsRankedDown() {
+        // 120 as a little endian float32 is a denormal, and no game stores one on purpose. That is
+        // what stops four bytes of gold counter from winning the ranking as a hit points value.
+        val report = SaveDiff.compare(sampleSave(gold = 120), sampleSave(gold = 999_999))
+
+        val asFloat = report.candidates.firstOrNull { it.offset == 8 && it.type == FieldType.FLOAT }
+        assertNotNull("the float reading of the same bytes is still a candidate", asFloat)
+        assertTrue(asFloat!!.reasons.any { it.contains("denormal") })
+        assertTrue(asFloat.score < report.best!!.score)
+    }
+
+    @Test
     fun aBigEndianFieldKeepsItsByteOrder() {
         val report = SaveDiff.compare(sampleSave(playTime = 600), sampleSave(playTime = 660))
 
@@ -166,12 +178,13 @@ class SaveDiffTest {
 
     @Test
     fun aTwoByteCounterIsFoundAsI16() {
-        val report = SaveDiff.compare(sampleSave(lives = 3), sampleSave(lives = 9))
+        // 3 -> 300 moves both bytes of the counter, which is the clean case for a two byte field.
+        val report = SaveDiff.compare(sampleSave(lives = 3), sampleSave(lives = 300))
 
         val candidate = report.candidates.firstOrNull { it.offset == 20 && it.type == FieldType.INT16 }
         assertNotNull("expected an i16 candidate at 20", candidate)
         assertEquals(FieldValue.Int64(3), candidate!!.before)
-        assertEquals(FieldValue.Int64(9), candidate.after)
+        assertEquals(FieldValue.Int64(300), candidate.after)
         assertTrue(candidate.reasons.any { it.contains("exactly 2 byte") })
     }
 

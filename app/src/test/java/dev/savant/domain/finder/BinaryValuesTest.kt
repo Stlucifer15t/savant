@@ -24,7 +24,8 @@ class BinaryValuesTest {
         assertEquals(0x12345678L, value(little, 0, FieldType.INT32, Endianness.LITTLE))
         assertEquals(0x12345678L, value(big, 0, FieldType.INT32, Endianness.BIG))
         // The same four bytes, read the other way round, are a different number.
-        assertEquals(0x78563412L, value(little, 0, FieldType.UINT32, Endianness.LITTLE))
+        assertEquals(0x78563412L, value(little, 0, FieldType.UINT32, Endianness.BIG))
+        assertEquals(0x12345678L, value(big, 0, FieldType.UINT32, Endianness.LITTLE))
     }
 
     @Test
