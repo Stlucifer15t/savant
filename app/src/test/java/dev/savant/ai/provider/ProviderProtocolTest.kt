@@ -43,10 +43,17 @@ class ProviderProtocolTest {
         maxOutputTokens = maxTokens,
     )
 
+    /**
+     * Generation settings are set here rather than left to the defaults, because a protocol writes
+     * what the request carries: filling them from the profile is [dev.savant.ai.RemoteLlmClient]'s
+     * job, and `RemoteAssistantTest.generationSettingsComeFromTheProfileNotTheCaller` pins that.
+     */
     private fun request(text: String = "set gold to 999") = LlmRequest(
         messages = listOf(LlmMessage(role = LlmMessage.Role.USER, text = text)),
         tools = tools,
         systemPrompt = "savant edits game save files.",
+        temperature = 0.1f,
+        maxOutputTokens = 256,
     )
 
     // ---- openai compatible ---------------------------------------------------------
