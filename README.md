@@ -46,6 +46,20 @@ cd savant
 ./gradlew :app:testDebugUnitTest    # 123 unit tests, pure jvm
 ```
 
+### or just install the apk
+
+every push to the working branch builds a debug apk on github runners and
+republishes it to one rolling release, so the url never changes:
+
+**https://github.com/Stlucifer15t/savant/releases/download/savant-debug/app-debug.apk**
+(~12 mb, debug-signed, `dev.savant.debug`)
+
+on the phone: allow "install unknown apps" for the browser or file manager, open
+the apk, install. the same build is also kept as a workflow artifact
+(`savant-debug-apk`, 14 days) under the run's summary. `.github/workflows/build-apk.yml`
+runs the unit tests after the apk is published, so a test failure never blocks
+the download.
+
 versions are pinned in `gradle/libs.versions.toml`: agp 8.7.3, kotlin 2.0.21, ksp 2.0.21-1.0.28,
 hilt 2.52, compose bom 2024.10.01, gradle wrapper 8.11. nothing in the build needs a newer
 toolchain, and no version was chosen that could not be resolved.
@@ -393,12 +407,16 @@ reasonable choices made without asking, so they are written down:
 12. **toolchain pinned to what could be verified to exist.** newer releases (kotlin 2.4.x, gradle
     9.x, dagger 2.60) exist but were not resolvable here, so the build uses versions that are known
     to be on google maven and maven central.
-13. **no `assembleDebug` was possible while this was written** — the sandbox has no android sdk and
-    no access to google maven. the jvm half of the app (domain, parsers, codecs, ai, and their 123
-    tests) was compiled and run with kotlinc and a stub junit runner; the android and compose half
-    was compiled against the real sources with every unresolved reference accounted for, and written
-    against stable, non-experimental compose material 3 apis. run `./gradlew :app:assembleDebug`
-    once on a machine with the sdk to confirm.
+13. **the app is built in ci, not in the dev sandbox.** the sandbox has no android sdk and no
+    access to google maven, so while it was written the jvm half (domain, parsers, codecs, ai and
+    their 123 tests) was compiled and run with kotlinc and a stub junit runner, and the android
+    half was written against stable, non-experimental material 3 apis. `.github/workflows/build-apk.yml`
+    is now the compiler of record: it builds the apk, publishes it, then runs the tests. the first
+    real build caught four things the sandbox could not — a nullable `Uri` passed to
+    `takePersistableUriPermission`, two missing compose imports, and a missing hilt `@Binds` for
+    `BackupStore` — all fixed. because runner logs are served from a host the sandbox cannot reach,
+    a failing build pushes its own gradle log to the `ci-logs` branch (`.ci/build.log`), which is
+    readable through the ordinary contents api.
 
 ---
 
