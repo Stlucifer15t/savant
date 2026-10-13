@@ -125,8 +125,9 @@ class BinaryPluginParser(private val plugin: GamePlugin) : SaveParser {
             }
             val endianness = mapping.endianness ?: plugin.endianness
             val size = type.sizeBytes
-            if (mapping.pointer != null) {
-                val base = readPointer(payload, mapping, warnings) ?: continue
+            val pointerAt = mapping.pointer
+            if (pointerAt != null) {
+                val base = readPointer(payload, mapping, pointerAt, warnings) ?: continue
                 val stride = (mapping.stride ?: size).coerceAtLeast(1)
                 val room = ((payload.size - base - mapping.recordOffset) / stride).coerceAtLeast(0)
                 val count = (mapping.count ?: room).coerceIn(0, MAX_ARRAY_ELEMENTS)
@@ -157,14 +158,19 @@ class BinaryPluginParser(private val plugin: GamePlugin) : SaveParser {
      * The value at `pointer` is treated as an offset into the decoded payload, minus `pointerBase`
      * for games that store a load address instead.
      */
-    private fun readPointer(payload: ByteArray, mapping: FieldMapping, warnings: MutableList<String>): Int? {
+    private fun readPointer(
+        payload: ByteArray,
+        mapping: FieldMapping,
+        pointerAt: Int,
+        warnings: MutableList<String>,
+    ): Int? {
         val pointerType = FieldType.fromTag(mapping.pointerType) ?: FieldType.UINT32
         val size = pointerType.sizeBytes ?: 4
-        if (mapping.pointer + size > payload.size) {
-            warnings += "'${mapping.path}' reads its pointer at ${mapping.pointer}, past the end of the payload"
+        if (pointerAt + size > payload.size) {
+            warnings += "'${mapping.path}' reads its pointer at $pointerAt, past the end of the payload"
             return null
         }
-        val raw = BinaryValues.read(payload, mapping.pointer, pointerType, mapping.endianness ?: plugin.endianness)
+        val raw = BinaryValues.read(payload, pointerAt, pointerType, mapping.endianness ?: plugin.endianness)
         val value = raw?.asPointerValue() ?: 0L
         val base = (value - mapping.pointerBase).toInt()
         if (base < 0 || base >= payload.size) {
@@ -274,10 +280,11 @@ internal class BinaryPluginDocument(
     }
 
     override fun toBytes(): ByteArray {
-        val sealed = if (checksum == null) {
+        val spec = checksum
+        val sealed = if (spec == null) {
             payload
         } else {
-            runCatching { checksum.apply(payload) }.getOrElse { error ->
+            runCatching { spec.apply(payload) }.getOrElse { error ->
                 throw dev.savant.codecs.ChecksumException(
                     "plugin ${plugin.gameName}: ${error.message ?: "the checksum could not be written"}",
                     error,

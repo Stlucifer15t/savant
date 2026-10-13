@@ -88,14 +88,15 @@ object PluginCodec {
     }
 
     /** Decodes a list document, keeping the plugins that are valid and reporting the rest. */
-    fun decodeAll(text: String): Pair<List<GamePlugin>, List<String>> {
+    fun decodeAll(text: String?): Pair<List<GamePlugin>, List<String>> {
+        if (text.isNullOrBlank()) return emptyList<GamePlugin>() to emptyList<String>()
         val json = runCatching { JsonPayload.read(text) }.getOrNull()
-        val items = when (json) {
+        val items: List<Json> = when (json) {
             is Json.Arr -> json.items
-            is Json.Obj -> json.list("plugins").ifEmpty { listOf(json) }
+            is Json.Obj -> json.list("plugins").ifEmpty { listOf<Json>(json) }
             else -> emptyList()
         }
-        if (items.isEmpty()) return emptyList() to listOf("no plugin found in that file")
+        if (items.isEmpty()) return emptyList<GamePlugin>() to listOf("no plugin found in that file")
         val good = mutableListOf<GamePlugin>()
         val bad = mutableListOf<String>()
         items.forEachIndexed { index, item ->
