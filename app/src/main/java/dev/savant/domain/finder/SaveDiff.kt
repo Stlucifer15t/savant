@@ -4,7 +4,6 @@ import dev.savant.domain.model.Endianness
 import dev.savant.domain.model.FieldType
 import dev.savant.domain.model.FieldValue
 import dev.savant.domain.model.asDouble
-import dev.savant.domain.model.asLong
 import kotlin.math.abs
 
 /**
@@ -115,7 +114,8 @@ object SaveDiff {
                             found += rank(offset, type, endian, before, after, run, sameSize, a, b)
                             if (found.size >= hardCap) {
                                 stopped = true
-                                break@loop
+                                // `run loop@{}` is a lambda, so this is a return, not a break.
+                                return@loop
                             }
                         }
                     }
@@ -295,10 +295,12 @@ object SaveDiff {
             reasons += "bytes are printable text"
         }
 
-        val previous = (before as? FieldValue.Int64)?.asLong()
+        val previous = (before as? FieldValue.Int64)?.value
         when (after) {
             is FieldValue.Int64 -> {
-                val value = after.asLong()
+                // `.value`, not `asLong()`: inside this branch the type is known, and the extension
+                // would hand back a nullable and lose the comparison.
+                val value = after.value
                 if (value in 0..10_000_000) {
                     score += 0.10f
                     reasons += "plausible magnitude"
