@@ -114,6 +114,20 @@ jobs:
           set -eo pipefail
           ./gradlew :app:testDebugUnitTest --stacktrace --no-daemon 2>&1 | tee -a /tmp/gradle.log
 
+      # Gradle's console line for a failed test is only `AssertionError at File.kt:12`, which is not
+      # enough to fix anything from here. The junit xml has the expected and actual values.
+      - name: collect test failure messages
+        if: failure()
+        run: |
+          {
+            echo "===== junit failures ====="
+            find app/build/test-results -name '*.xml' 2>/dev/null | while read -r f; do
+              grep -l '<failure' "$f" > /dev/null 2>&1 || continue
+              echo "--- $f"
+              tr '>' '>\n' < "$f" | grep -A 12 '<failure' | head -80
+            done
+          } >> /tmp/gradle.log 2>&1 || true
+
       # Runs whenever anything above failed. Pushes the gradle output to the ci-logs branch so it
       # can be read back through api.github.com; that branch has no workflow trigger, so no loop.
       - name: publish failure log

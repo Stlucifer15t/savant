@@ -193,7 +193,8 @@ class EntryCodecTest {
         val back = EntryCodec.decode(stored) as DiffEntry
 
         assertTrue(stored.body.contains("player.gold: 120 -> 999999"))
-        assertTrue(stored.body.contains("player.name: hero -> savant"))
+        // Text values display quoted, which keeps a string searchable as a string.
+        assertTrue(stored.body.contains("player.name: \"hero\" -> \"savant\""))
 
         assertEquals(entry.status, back.status)
         assertEquals(entry.note, back.note)
