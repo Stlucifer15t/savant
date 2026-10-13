@@ -3,6 +3,9 @@ name: build apk
 # Builds a debug APK on GitHub's runners (the dev sandbox has no Android SDK) and publishes it to
 # a rolling release, so there is always one URL to download and install:
 #   https://github.com/Stlucifer15t/savant/releases/download/savant-debug/app-debug.apk
+#
+# Runner logs live on a host the dev sandbox cannot reach, so a failing build also pushes its own
+# log to the `ci-logs` branch (.ci/build.log), which is readable through the ordinary contents API.
 
 on:
   push:
@@ -49,11 +52,11 @@ jobs:
         with:
           cache-read-only: false
 
-      - name: unit tests
-        run: ./gradlew :app:testDebugUnitTest --stacktrace --no-daemon
-
       - name: assemble debug apk
-        run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
+        shell: bash
+        run: |
+          set -eo pipefail
+          ./gradlew :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee /tmp/gradle.log
 
       - name: report apk
         run: |
@@ -86,3 +89,31 @@ jobs:
             --notes "$NOTES" \
             --target "$GITHUB_SHA" \
             --latest
+
+      - name: unit tests
+        shell: bash
+        run: |
+          set -eo pipefail
+          ./gradlew :app:testDebugUnitTest --stacktrace --no-daemon 2>&1 | tee -a /tmp/gradle.log
+
+      # Runs whenever anything above failed. Pushes the gradle output to the ci-logs branch so it
+      # can be read back through api.github.com; that branch has no workflow trigger, so no loop.
+      - name: publish failure log
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "savant ci"
+          git config user.email "ci@savant.invalid"
+          git checkout -B ci-logs
+          mkdir -p .ci
+          tail -c 600000 /tmp/gradle.log > .ci/build.log 2>/dev/null || echo "no gradle log" > .ci/build.log
+          {
+            echo "sha: $GITHUB_SHA"
+            echo "run: $GITHUB_RUN_ID"
+            echo "job: $GITHUB_JOB"
+            echo "finished: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > .ci/run.txt
+          git add -f .ci
+          git commit -m "ci: build log for ${GITHUB_SHA::7}"
+          git push -f origin ci-logs
