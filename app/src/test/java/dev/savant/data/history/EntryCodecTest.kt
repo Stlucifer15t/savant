@@ -280,11 +280,13 @@ class EntryCodecTest {
     @Test
     fun `a notice round trips`() {
         val entry = NoticeEntry(id = "n1", title = "read only", lines = listOf("codec=\"xor\" is not reversible"))
-        val back = EntryCodec.decode(EntryCodec.encode(entry, sessionId, 7)) as NoticeEntry
+        val stored = EntryCodec.encode(entry, sessionId, 7)
+        val back = EntryCodec.decode(stored) as NoticeEntry
 
         assertEquals(entry.title, back.title)
         assertEquals(entry.lines, back.lines)
-        assertTrue(back.body.contains("read only"))
+        assertTrue(stored.body.contains("read only"))
+        assertTrue(stored.isError)
     }
 
     @Test
