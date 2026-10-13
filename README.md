@@ -43,12 +43,17 @@ git clone <this repo> savant
 cd savant
 ./gradlew :app:assembleDebug        # build
 ./gradlew :app:installDebug         # install on a device or emulator
-./gradlew :app:testDebugUnitTest    # 123 unit tests, pure jvm
+./gradlew :app:testDebugUnitTest    # 315 unit tests, pure jvm
 ```
+
+no android sdk and no route to maven? `tools/jvmcheck/setup.sh` fetches jdk 17 and kotlinc 2.0.21
+from pypi and npm, and `tools/jvmcheck/check.sh` compiles the pure-jvm half with the same 315 tests
+in about thirty seconds. it is how the sandbox checks its work before ci builds the apk; see
+[testing](#testing).
 
 ### or just install the apk
 
-every push to the working branch builds a debug apk on github runners and
+every push to a working branch (`arena/**`) builds a debug apk on github runners and
 republishes it to one rolling release, so the url never changes:
 
 **https://github.com/Stlucifer15t/savant/releases/download/savant-debug/app-debug.apk**
@@ -103,6 +108,8 @@ backups → restore reopens it in one tap.
 - **chat** — the workbench. header shows file name, format badge, backup dot and pending change
   count. message list, flat input bar with a 1 px top border. a cold start shows the last
   transcript again, marked as history; long press a field name to save a name for a cryptic key.
+  a call that would leave the device — a web search, a fetch, a connector — arrives as a card asking
+  first, and stays in the transcript as a record of what was allowed.
 - **files** — the open file, backups, recent imports, and history: every session savant opened plus
   a search box over the stored transcripts. restore, delete, reopen, view, clear.
 - **formats** — what parses today, what is planned, the codec/checksum matrix, the plugin schema, and
@@ -113,8 +120,6 @@ backups → restore reopens it in one tap.
   to the chat. **compare saves** takes two saves of the same game and ranks every typed value that
   moved. **scan bytes** takes one file and a value you know is in it, and lists every offset that
   holds it. the byte modes need no parser, and a candidate can be named.
-  a call that would leave the device — a web search, a fetch, a connector — arrives as a card asking
-  first, and stays in the transcript as a record of what was allowed.
 - **settings** — appearance, editing behaviour, providers (profiles, keys, endpoint verdict, test
   connection), web tools, connectors, privacy, network log, data, about.
 
@@ -559,8 +564,17 @@ mapping — so the work done here is not thrown away when the format gets a real
 ## testing
 
 ```bash
-./gradlew :app:testDebugUnitTest
+./gradlew :app:testDebugUnitTest        # the real junit task, what ci runs
+tools/jvmcheck/setup.sh                 # once: jdk 17 + kotlinc 2.0.21 into ~/.cache/savant/toolchain
+tools/jvmcheck/check.sh                 # the same tests without gradle or an android sdk, ~30 s
+tools/jvmcheck/check.sh Json            # only the test classes whose name contains "Json"
 ```
+
+`check.sh` compiles `domain/`, `parsers/`, `codecs/`, `plugins/`, `mcp/`, `ai/` and the three pure
+`data/` files with the pinned kotlinc, skipping (and naming) any file that imports android or hilt,
+and runs the suite through a 400-line junit 4 stand-in in `tools/jvmcheck/junit-stub` — the real jar
+is not reachable from the sandbox. it is a pre-push check, not a replacement: ci still runs the real
+junit task and compiles the android half.
 
 315 tests, pure jvm, no robolectric and no android APIs:
 
@@ -664,8 +678,9 @@ original, and unedited bytes come back identical.
   been re-parsed and every applied edit checked.
 - min/max and type constraints are validated; a value that does not fit is reported, not clamped
   silently.
-- no storage permission, no upload, no analytics. `INTERNET` is declared for the provider, search
-  and mcp steps; today nothing uses it.
+- no storage permission, no upload, no analytics. `INTERNET` is used by exactly three things — a
+  provider you configured, the two web tools, and connectors — and all three are off until you turn
+  them on. a web or connector call also asks first, every time, in the chat.
 - parsing runs off the main thread with hard caps on file size, node count and depth.
 
 ---
@@ -688,19 +703,22 @@ reasonable choices made without asking, so they are written down:
 4. **the local assistant is a deterministic command parser**, not a model. it keeps steps 1–3
    useful with no api key, and it exercises the exact tool path a provider will use later. the
    `AssistantEngine` contract is the seam.
-5. **room is deferred to step 4.** backups and the recent-imports list are file backed
-   (`files/backups/<id>/{save.bin,meta.txt}` and `files/imports.txt`) so step 3 has restore without
-   a schema. the on-disk layout is deliberately boring so it can be lifted into tables unchanged.
-6. **api keys live in memory only for now.** `SecretStore` is a process-scoped map; step 6 replaces
-   it with `EncryptedSharedPreferences`. nothing is written to disk, and every surface shows a
-   masked value.
+5. **room was deferred to step 4.** backups and the recent-imports list were file backed
+   (`files/backups/<id>/{save.bin,meta.txt}` and `files/imports.txt`) so step 3 had restore without
+   a schema. the on-disk layout was deliberately boring so it could be lifted into tables unchanged —
+   which is what `LegacyStoreMigration` did, once, in step 4.
+6. **api keys lived in memory only until step 6.** `SecretStore` is still the interface every screen
+   talks to; `EncryptedSecretStore` is the keystore-backed implementation behind it, and the
+   process-scoped map is what it falls back to when the keystore refuses. every surface shows a
+   masked value either way.
 7. **icons are feather-derived vector drawables** rather than `material-icons-extended` (a 7 000-icon
    dependency for ~50 glyphs) or lucide (not fetchable in this environment, same design lineage).
 8. **fonts are bundled ttfs** rather than downloadable fonts: savant has to look identical offline
    and on devices without the play services font provider.
 9. **`org.jetbrains.kotlin.plugin.serialization` is deliberately absent.** there is no runtime
-   serialization jar in the pinned set yet and nothing needs it; the plugin json model arrives with
-   step 7.
+   serialization jar in the pinned set and nothing needs it: the plugin document, the profile set,
+   the connector store and every provider body go through savant's own `JsonPayload`, which is the
+   same hand-written reader the parsers use.
 10. **document caps** — 1 000 000 json/xml values and 25 000 field nodes. a phone has to stay
     responsive, and a save that big is a database, not a save.
 11. **exports always use `application/octet-stream`** in `ACTION_CREATE_DOCUMENT`; the file name
@@ -710,16 +728,18 @@ reasonable choices made without asking, so they are written down:
     9.x, dagger 2.60) exist but were not resolvable here, so the build uses versions that are known
     to be on google maven and maven central.
 13. **the app is built in ci, not in the dev sandbox.** the sandbox has no android sdk and no
-    access to google maven, so while it was written the jvm half (domain, parsers, codecs, ai and
-    their 123 tests) was compiled and run with kotlinc and a stub junit runner, and the android
-    half was written against stable, non-experimental material 3 apis. `.github/workflows/build-apk.yml`
-    is now the compiler of record: it builds the apk, publishes it, then runs the tests. the first
-    real build caught four things the sandbox could not — a nullable `Uri` passed to
-    `takePersistableUriPermission`, two missing compose imports, and a missing hilt `@Binds` for
-    `BackupStore` — all fixed. because runner logs are served from a host the sandbox cannot reach,
-    a failing build pushes its own gradle log to the `ci-logs` branch (`.ci/build.log`), which is
-    readable through the ordinary contents api. a failing *test* also pushes the junit xml messages,
-    because gradle's console line is only `AssertionError at File.kt:12`.
+    access to google maven, so the jvm half (domain, parsers, codecs, plugins, mcp, ai and their
+    315 tests) is compiled and run with kotlinc and a stub junit runner — `tools/jvmcheck`, checked
+    in so the next session does not rebuild it — and the android half is written against stable,
+    non-experimental material 3 apis. `.github/workflows/build-apk.yml` is the compiler of record:
+    it builds the apk, publishes it, then runs the tests, on every push to any `arena/**` branch,
+    because each working session gets a fresh branch and a trigger naming one branch goes quiet the
+    moment the next session starts. the first real build caught four things the sandbox could not —
+    a nullable `Uri` passed to `takePersistableUriPermission`, two missing compose imports, and a
+    missing hilt `@Binds` for `BackupStore` — all fixed. because runner logs are served from a host
+    the sandbox cannot reach, a failing build pushes its own gradle log to the `ci-logs` branch
+    (`.ci/build.log`), which is readable through the ordinary contents api. a failing *test* also
+    pushes the junit xml messages, because gradle's console line is only `AssertionError at File.kt:12`.
 14. **history stores text, not values.** see [the local database](#the-local-database). the
     alternative — snapshotting the field tree per message — would make a transcript a second copy of
     every save on the phone and would show numbers that no longer match the file.
@@ -749,30 +769,30 @@ reasonable choices made without asking, so they are written down:
 22. **a half configured profile fails loudly.** falling back to the on device engine when a key is
     missing would be kinder to the code and worse for the person: they configured a provider, asked a
     question, and got an answer from something else. savant says what is missing instead.
-24. **a plugin is data.** there is no script, no bytecode, no expression language and no fetch: a
+23. **a plugin is data.** there is no script, no bytecode, no expression language and no fetch: a
     plugin says where the fields are, and the same deterministic kotlin that reads savant's own
     formats does the reading and writing. that is why importing one cannot execute anything, and why
     the whole runtime is unit tested on the host.
-25. **a mapped plugin re-applies itself to every tree the document produces.** decorating the parse
+24. **a mapped plugin re-applies itself to every tree the document produces.** decorating the parse
     result once would show the plugin's names for one frame and lose them at the first edit, because
     the base document hands back its own tree. the mapping is a function of the tree, applied on the
     way out.
-26. **a plugin's limits are enforced, not displayed.** a mapped document validates against the mapped
+25. **a plugin's limits are enforced, not displayed.** a mapped document validates against the mapped
     tree before handing an edit to the base parser, so `max` and `editable: false` are rules. the base
     parser only knows the file's own limits, and without this a plugin's maximum would be decoration.
-28. **no mcp sdk dependency.** remote-only mcp is `initialize`, `tools/list` and `tools/call` over a
+26. **no mcp sdk dependency.** remote-only mcp is `initialize`, `tools/list` and `tools/call` over a
     transport savant already had, plus sse unwrapping — about two hundred lines that run in a unit
     test against a fake. a sdk would have added a dependency, a version to track, and stdio support
     savant does not want and would have to disable.
-29. **confirmation is per call, not per session.** approving one fetch does not approve the next one,
+27. **confirmation is per call, not per session.** approving one fetch does not approve the next one,
     and the card stays in the transcript so a conversation shows what was allowed to leave the device.
-30. **web and connector output is marked untrusted where it is produced**, not where it is rendered.
+28. **web and connector output is marked untrusted where it is produced**, not where it is rendered.
     the wrapper travels with the text into the prompt, so a model cannot be told by a web page that
     the rule does't apply.
-31. **a connector's tools are cached, and the cache is the contract.** "what can the model call" has to
+29. **a connector's tools are cached, and the cache is the contract.** "what can the model call" has to
     be answerable synchronously to build a prompt, and answering it with a network call would mean a
     handshake before every message.
-32. **the cleartext gate lives in code, not in the platform config.** android can allow or forbid
+30. **the cleartext gate lives in code, not in the platform config.** android can allow or forbid
     cleartext per *domain*, and a local model box is an ip address, not a domain. so the platform is
     told cleartext is permitted and `NetworkPolicy` refuses every http url that is not on the phone's
     own network — a rule with tests, rather than a config nobody can express.
@@ -787,8 +807,9 @@ reasonable choices made without asking, so they are written down:
 - a `MAX` shortcut on a value with no declared maximum uses `2147483647`; a binary parser with a
   real type will use its own range.
 - the byte finder ranks, it does not know. a candidate is a proposal with its reasons attached; the
-  edit still has to go through a parser or, from step 9, an offset plugin. naming one stores the
-  mapping but nothing writes through it yet.
+  edit still has to go through a parser. naming one stores the mapping, and formats → plugins →
+  "from the finder" turns the named offsets into a binary plugin that writes through it — but the
+  plugin is only as right as the candidate was, and a wrong offset edits the wrong bytes.
 - compare mode holds two files in memory at once, so it caps each at 32 mb (the parser's own cap is
   50 mb). a save bigger than that is a database, not a save.
 - the byte finder cannot see a value that is compressed, encrypted or checksummed per block: if the

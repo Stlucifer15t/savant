@@ -11,3 +11,6 @@ captures/
 *.aab
 *.keystore
 !debug.keystore
+
+# tools/jvmcheck: the sandbox toolchain lives in ~/.cache/savant/toolchain by default; never in git
+tools/jvmcheck/.toolchain/

@@ -6,11 +6,15 @@ name: build apk
 #
 # Runner logs live on a host the dev sandbox cannot reach, so a failing build also pushes its own
 # log to the `ci-logs` branch (.ci/build.log), which is readable through the ordinary contents API.
+#
+# Every working session gets its own `arena/<id>-savant` branch, so the trigger is the pattern and
+# not one branch name: a session whose branch is not listed here builds nothing, tests nothing and
+# publishes nothing, and finds out late.
 
 on:
   push:
     branches:
-      - "arena/0fa73532-savant"
+      - "arena/**"
       - main
   pull_request:
   workflow_dispatch:
@@ -67,7 +71,7 @@ jobs:
       # bump has something to diff against — and the sandbox cannot download artifacts, so this is
       # how the schema gets back. `[skip ci]` keeps the push from starting another run.
       - name: commit exported room schema
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/arena/0fa73532-savant'
+        if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/heads/arena/')
         run: |
           if [ -d app/schemas ]; then
             git config user.name "savant ci"
@@ -77,7 +81,7 @@ jobs:
               git commit -m "chore: exported room schema [skip ci]"
               # A rejection here means the branch moved while this run was building; the next push
               # carries the schema instead. Not worth failing an otherwise green build over.
-              git push origin HEAD:arena/0fa73532-savant || echo "schema push skipped, branch moved"
+              git push origin "HEAD:${GITHUB_REF_NAME}" || echo "schema push skipped, branch moved"
             fi
           fi
 
@@ -90,12 +94,12 @@ jobs:
           retention-days: 14
 
       - name: publish rolling release
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/arena/0fa73532-savant'
+        if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/heads/arena/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           APK=$(ls app/build/outputs/apk/debug/*.apk | head -1)
-          NOTES="debug build of ${GITHUB_SHA::7} — $(date -u +%Y-%m-%dT%H:%MZ)
+          NOTES="debug build of ${GITHUB_SHA::7} from ${GITHUB_REF_NAME} — $(date -u +%Y-%m-%dT%H:%MZ)
 
           install: allow 'install unknown apps' for your browser or file manager, then open the apk.
           savant edits offline single-player saves; do not point it at an online game.
