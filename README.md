@@ -20,7 +20,7 @@ byte.
 | 2 | file import, json + xml parsers, field list in chat | **done** |
 | 3 | edit flow, diff preview, rebuild + verify + export | **done** |
 | 4 | room database: history, sessions, search | **done** |
-| 5 | value finder across two saves, typed binary scanner | planned |
+| 5 | value finder across two saves, typed binary scanner | **done** |
 | 6 | ai providers, profiles, privacy controls | planned |
 | 7 | plugin runtime: import/export game definitions | planned |
 | 8 | mcp connectors, web search, fetch | planned |
@@ -107,8 +107,11 @@ backups → restore reopens it in one tap.
   a search box over the stored transcripts. restore, delete, reopen, view, clear.
 - **formats** — what parses today, what is planned, the codec/checksum matrix, and the plugin
   schema written down ahead of the runtime.
-- **finder** — search the open save by name, path, value, `category:flags` or `type:f32`. expanding
-  a hit shows the full field record and hands it to the chat.
+- **finder** — three modes behind one bar. **open file** searches the parsed tree by name, path,
+  value, `category:flags` or `type:f32`, and expanding a hit shows the full field record and hands it
+  to the chat. **compare saves** takes two saves of the same game and ranks every typed value that
+  moved. **scan bytes** takes one file and a value you know is in it, and lists every offset that
+  holds it. the byte modes need no parser, and a candidate can be named.
 - **settings** — appearance, editing behaviour, ai provider (inert until step 6), privacy, data,
   about.
 
@@ -132,6 +135,7 @@ app/src/main/java/dev/savant/
 ├── di/                      Hilt modules + dispatcher qualifiers
 ├── domain/
 │   ├── chat/                chat entry models (text, file, parse, fields, diff, export, notice)
+│   ├── finder/              BinaryValues, Candidate, ScanSpec, SaveDiff — two save diff and scan
 │   ├── model/               Node, FieldTree, FieldValue, FieldType, FieldPath, FieldEdit,
 │   │                        FieldCategory, Confidence, SaveFormat, ImportedFile, AiGuess
 │   ├── parser/              SaveParser, SaveDocument, ParserRegistry, ExportVerifier, limits
@@ -148,7 +152,8 @@ app/src/main/java/dev/savant/
     ├── components/          FileChip, ParseProgress, FieldGroupCard, DiffCard, ExportCard,
     │                        CandidateRow, EmptyState, Messages, Primitives, TopBars, ValueTicker
     ├── chat/                ChatScreen, ChatViewModel
-    ├── files/  formats/  finder/  settings/
+    ├── files/  formats/  settings/
+    ├── finder/              FinderScreen, FinderViewModel, ScanPanel (compare + scan modes)
 ```
 
 `domain/`, `parsers/`, `codecs/` and the parsing half of `ai/` are pure jvm: no android imports, no
@@ -341,13 +346,59 @@ message text are all in there. no fts index, no network, no service.
 
 ---
 
+## the value finder
+
+For a format savant cannot parse, the value is still in there somewhere. Three things find it, and
+none of them writes a byte.
+
+**compare saves** — the workflow every cheat engine converged on, because it is the one that works:
+
+1. play, change one thing (spend gold, take damage), save again;
+2. hand savant both files. it looks *only* at the bytes that differ, interprets each changed stretch
+   as every fixed width number in both byte orders, and ranks what it finds;
+3. too many candidates? save a third time and narrow: what held its value is promoted, what moved
+   again is kept, what went back to its old value is dropped as a transient;
+4. name the winner.
+
+scanning only the changed runs is what makes this usable on a big file — reading every offset of
+every type in a 50 MB save would be 800 million reads to find four bytes that moved.
+
+**scan bytes** — the single file case: you know gold is 1234, savant lists every offset that holds
+it, as any of `i8 u8 i16 u16 i32 u32 i64 u64 f32 f64` in either byte order. Floats match with a
+tolerance, because `42.5` typed by a human and `42.5` stored as a float32 are not the same bits.
+
+**ranking** is conservative and always explains itself. Every candidate carries the reasons for its
+percentage:
+
+| signal | effect |
+| --- | --- |
+| the changed run is exactly this type's width | strongest positive |
+| the changed bytes sit at the low edge for this byte order | counters grow from the low end |
+| the offset is naturally aligned for the type | positive |
+| plausible magnitude, small increase | positive |
+| every byte in the window is printable ascii | probably part of a name |
+| no zero bytes in the window | digest shaped — a checksum, not a counter |
+| a float reading that is denormal or absurd | four bytes of an integer, misread |
+| 64 bit integer | rare in saves |
+| the two files differ in size | offsets are not comparable past the shorter one |
+
+A checksum trailer is the honest test: it changes whenever anything else does, so it always shows up
+in the list. The sample save in the tests has one, and the assertions are about the gold counter
+outranking it rather than the checksum being hidden.
+
+**naming a candidate** stores offset, type and byte order against a name, per format, in
+`named_fields`. That row is the finder's only output, and it is what step 7 exports as a plugin field
+mapping — so the work done here is not thrown away when the format gets a real parser.
+
+---
+
 ## testing
 
 ```bash
 ./gradlew :app:testDebugUnitTest
 ```
 
-152 tests, pure jvm, no robolectric and no android APIs:
+179 tests, pure jvm, no robolectric and no android APIs:
 
 - `domain/model/FieldModelTest` — paths, quoting, value parsing and formatting, types, categories,
   validation, quick values, tree search and normalisation.
@@ -372,6 +423,14 @@ message text are all in there. no fts index, no network, no service.
 - `parsers/json/JsonPayloadTest` — savant's own json: compact output, integers staying integers,
   string escaping, non-ascii text, tolerant accessors, and the rule that a stored string stays a
   string unless the field declares a type.
+- `domain/finder/BinaryValuesTest` — typed reads in both byte orders, sign extension for narrow
+  integers, float and double windows, windows that do not fit, offset and hex formatting, and the
+  two shape tests ranking depends on: printable text, and no zero bytes.
+- `domain/finder/SaveDiffTest` — the finder over two small sample saves shaped like a real one:
+  magic header, i32 gold, f32 hp, i16 lives, an ascii name, a big endian play time and a crc32
+  trailer that moves whenever anything else does. changed runs, ranking (the gold counter has to beat
+  the checksum it disturbed, and a float reading of an integer has to lose), byte order, alignment
+  flags, size mismatches, third save narrowing, exact value scans and two scale checks.
 
 every parser test asserts the round trip in both directions: parse → write → parse equals the
 original, and unedited bytes come back identical.
@@ -473,6 +532,16 @@ reasonable choices made without asking, so they are written down:
     sequences, with overlong forms, surrogates and truncated sequences falling back to the raw byte.
 16. **named fields are display only.** a saved name is laid over the parsed tree in the ui; the
     parser still reads and writes the real key, so a renamed field never changes the bytes.
+17. **the finder interprets only the bytes that differ.** the obvious implementation — read every
+    offset as every type — is 800 million reads on a 50 mb file and mostly noise; two saves of one
+    game differ in a handful of places, so that is all savant looks at. a single file scan is the
+    exception, and it is bounded by the value being searched for.
+18. **a candidate's reasons are part of the result, not a debug aid.** the ranking is a set of
+    heuristics, and heuristics are only useful if the user can see which ones fired and disagree
+    with them. `Candidate.reasons` is rendered next to the percentage.
+19. **float readings are judged on both sides of the change.** four bytes of a small integer read as
+    a little endian float32 come out as a denormal (120 is 1.6e-43), and no game stores one on
+    purpose. without that rule a float misreading of the gold counter outranked the gold counter.
 
 ---
 
@@ -483,8 +552,13 @@ reasonable choices made without asking, so they are written down:
 - xml round trips byte-exactly except for whitespace *inside* tags, which is normalised on write.
 - a `MAX` shortcut on a value with no declared maximum uses `2147483647`; a binary parser with a
   real type will use its own range.
-- the finder searches one open file. value diffs across two saves and typed binary scanning are
-  step 5.
+- the byte finder ranks, it does not know. a candidate is a proposal with its reasons attached; the
+  edit still has to go through a parser or, from step 9, an offset plugin. naming one stores the
+  mapping but nothing writes through it yet.
+- compare mode holds two files in memory at once, so it caps each at 32 mb (the parser's own cap is
+  50 mb). a save bigger than that is a database, not a save.
+- the byte finder cannot see a value that is compressed, encrypted or checksummed per block: if the
+  codec changed the bytes, the diff shows the codec's output, not the field.
 - history search is a substring match over stored text, not ranked full text search, and it looks at
   message bodies — a value that only ever appeared inside a field card is not in there, because
   field values are not stored.
