@@ -216,34 +216,6 @@ class BinaryPluginParser(private val plugin: GamePlugin) : SaveParser {
         else -> BinaryValues.read(payload, field.offset, field.type, field.endianness)
     }
 
-    /** Writes a text field, NUL padded to its own width. Too long is refused, never truncated. */
-    private fun writeText(payload: ByteArray, field: ResolvedField, value: FieldValue): String? {
-        val text = (value as? FieldValue.Text)?.value ?: return "a ${field.type.tag} field needs text"
-        val encoded = text.toByteArray(Charsets.UTF_8)
-        if (encoded.size > field.width) {
-            return "${encoded.size} bytes does not fit in the ${field.width} byte field"
-        }
-        for (i in 0 until field.width) {
-            payload[field.offset + i] = if (i < encoded.size) encoded[i] else 0
-        }
-        return null
-    }
-
-    /** Writes a flag as [width] bytes of zero or one. */
-    private fun writeFlag(payload: ByteArray, field: ResolvedField, value: FieldValue): Boolean {
-        val flag = when (value) {
-            is FieldValue.Bool -> if (value.value) 1L else 0L
-            is FieldValue.Int64 -> value.value
-            else -> return false
-        }
-        if (field.offset < 0 || field.offset + field.width > payload.size) return false
-        for (i in 0 until field.width) {
-            val shift = if (field.endianness == Endianness.BIG) 8 * (field.width - 1 - i) else 8 * i
-            payload[field.offset + i] = ((flag ushr shift) and 0xFF).toByte()
-        }
-        return true
-    }
-
     private fun nodeFor(field: ResolvedField, payload: ByteArray): Node {
         val mapping = field.mapping
         val value = valueFor(field, payload)
@@ -344,6 +316,34 @@ internal class BinaryPluginDocument(
 
         if (applied.isNotEmpty()) tree = tree.withNodes(updated)
         return ApplyResult(tree, applied, rejected)
+    }
+
+    /** Writes a text field, NUL padded to its own width. Too long is refused, never truncated. */
+    private fun writeText(payload: ByteArray, field: ResolvedField, value: FieldValue): String? {
+        val text = (value as? FieldValue.Text)?.value ?: return "a ${field.type.tag} field needs text"
+        val encoded = text.toByteArray(Charsets.UTF_8)
+        if (encoded.size > field.width) {
+            return "${encoded.size} bytes does not fit in the ${field.width} byte field"
+        }
+        for (i in 0 until field.width) {
+            payload[field.offset + i] = if (i < encoded.size) encoded[i] else 0
+        }
+        return null
+    }
+
+    /** Writes a flag as [width] bytes of zero or one. */
+    private fun writeFlag(payload: ByteArray, field: ResolvedField, value: FieldValue): Boolean {
+        val flag = when (value) {
+            is FieldValue.Bool -> if (value.value) 1L else 0L
+            is FieldValue.Int64 -> value.value
+            else -> return false
+        }
+        if (field.offset < 0 || field.offset + field.width > payload.size) return false
+        for (i in 0 until field.width) {
+            val shift = if (field.endianness == Endianness.BIG) 8 * (field.width - 1 - i) else 8 * i
+            payload[field.offset + i] = ((flag ushr shift) and 0xFF).toByte()
+        }
+        return true
     }
 
     override fun toBytes(): ByteArray {
