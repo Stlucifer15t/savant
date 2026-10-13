@@ -48,7 +48,7 @@ class PluginCodecTest {
         val checksum = plugin.checksum!!
         assertEquals("crc32", checksum.strategy)
         assertEquals(4L, checksum.rangeStart)
-        assertEquals(-1L, checksum.rangeEnd)
+        assertEquals(-1L, checksum.rangeLength)
         assertEquals(0L, checksum.storedAt)
 
         assertEquals(2, plugin.fields.size)
