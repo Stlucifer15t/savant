@@ -19,7 +19,7 @@ byte.
 | 1 | project, theme, navigation, chat shell | **done** |
 | 2 | file import, json + xml parsers, field list in chat | **done** |
 | 3 | edit flow, diff preview, rebuild + verify + export | **done** |
-| 4 | room database: history, sessions, search | planned |
+| 4 | room database: history, sessions, search | **done** |
 | 5 | value finder across two saves, typed binary scanner | planned |
 | 6 | ai providers, profiles, privacy controls | planned |
 | 7 | plugin runtime: import/export game definitions | planned |
@@ -101,8 +101,10 @@ backups → restore reopens it in one tap.
 ## screens
 
 - **chat** — the workbench. header shows file name, format badge, backup dot and pending change
-  count. message list, flat input bar with a 1 px top border.
-- **files** — the open file, backups, recent imports. restore, delete, reopen, clear.
+  count. message list, flat input bar with a 1 px top border. a cold start shows the last
+  transcript again, marked as history; long press a field name to save a name for a cryptic key.
+- **files** — the open file, backups, recent imports, and history: every session savant opened plus
+  a search box over the stored transcripts. restore, delete, reopen, view, clear.
 - **formats** — what parses today, what is planned, the codec/checksum matrix, and the plugin
   schema written down ahead of the runtime.
 - **finder** — search the open save by name, path, value, `category:flags` or `type:f32`. expanding
@@ -122,11 +124,14 @@ app/src/main/java/dev/savant/
 ├── ai/                      assistant contract, tools, tool executor, local assistant
 ├── codecs/                  CodecStrategy, ChecksumSpec, ByteRangeSpec
 ├── data/
+│   ├── db/                  room entities, daos, SavantDatabase (schema in app/schemas)
+│   ├── history/             ChatHistoryRepository, EntryCodec, NamedFieldRepository
 │   ├── session/             SessionStore — the one open save, shared by every screen
 │   ├── settings/            SavantSettings, SettingsRepository (DataStore), SecretStore
-│   └── storage/             SaveFileRepository (SAF), FileBackupStore, ImportIndex
+│   └── storage/             SaveFileRepository (SAF), BackupStore + ImportIndex, room stores
 ├── di/                      Hilt modules + dispatcher qualifiers
 ├── domain/
+│   ├── chat/                chat entry models (text, file, parse, fields, diff, export, notice)
 │   ├── model/               Node, FieldTree, FieldValue, FieldType, FieldPath, FieldEdit,
 │   │                        FieldCategory, Confidence, SaveFormat, ImportedFile, AiGuess
 │   ├── parser/              SaveParser, SaveDocument, ParserRegistry, ExportVerifier, limits
@@ -134,7 +139,7 @@ app/src/main/java/dev/savant/
 ├── parsers/
 │   ├── FormatDetector.kt    magic bytes, text shape, blockers
 │   ├── categorize/          CategoryClassifier, Humanizer
-│   ├── json/                hand written reader, writer, tree builder, parser
+│   ├── json/                hand written reader, writer, tree builder, parser, JsonPayload
 │   └── xml/                 hand written reader, writer, values, tree builder, parser
 └── ui/
     ├── SavantApp.kt         NavHost + bottom bar
@@ -142,12 +147,14 @@ app/src/main/java/dev/savant/
     ├── icons/               SavantIcons (54 thin outline drawables)
     ├── components/          FileChip, ParseProgress, FieldGroupCard, DiffCard, ExportCard,
     │                        CandidateRow, EmptyState, Messages, Primitives, TopBars, ValueTicker
-    ├── chat/                ChatScreen, ChatViewModel, chat entry models
+    ├── chat/                ChatScreen, ChatViewModel
     ├── files/  formats/  finder/  settings/
 ```
 
 `domain/`, `parsers/`, `codecs/` and the parsing half of `ai/` are pure jvm: no android imports, no
-compose, no room. that is why they can be unit tested directly on the host.
+compose, no room. that is why they can be unit tested directly on the host. `data/history/EntryCodec`
+is deliberately in that group too — it turns a chat entry into a stored row and back without knowing
+room exists, so the encoding rules are testable.
 
 ---
 
@@ -303,13 +310,44 @@ dropped, and keys are redacted everywhere.
 
 ---
 
+## the local database
+
+room 2.6.1 through ksp, schema exported to `app/schemas` and committed — ci pushes it back to the
+branch after a build, so a later version bump always has something to diff against.
+
+| table | what it holds |
+| --- | --- |
+| `sessions` | one row per file savant opened: uri, name, format, size, node and edit counts, backup id, read-only reason, opened/closed timestamps |
+| `entries` | one row per chat message, foreign key to its session with `on delete cascade` |
+| `backups` | metadata only — the bytes stay at `files/backups/<id>/save.bin` |
+| `imports` | recent files, so a session can be reopened without browsing again |
+| `named_fields` | names given to cryptic keys, keyed by format plus the raw key |
+
+an entry is stored as two things: a plain text `body`, which is what the search matches, and a
+compact json `payload` for everything else. `EntryCodec` owns both directions.
+
+**what is not stored, on purpose:** field values and rebuilt bytes. a transcript is a record of what
+happened, not a copy of the save — values belong to the file, and pretending otherwise would show
+stale numbers next to live ones. so a restored field card shows `currency 3 · stats 12` and says
+"reopen the file to browse and edit its values", and a restored export card keeps its verification
+verdict with the share and save buttons off.
+
+the flat files step 3 used (`meta.txt` per backup, `imports.txt`) are read once by
+`LegacyStoreMigration`, moved into the tables, and renamed so it cannot run twice. `BackupStore` and
+`ImportIndex` kept their step 3 contracts, which is why no screen changed shape.
+
+search is a plain sqlite `like` over the stored body — paths, values, both sides of a diff and
+message text are all in there. no fts index, no network, no service.
+
+---
+
 ## testing
 
 ```bash
 ./gradlew :app:testDebugUnitTest
 ```
 
-123 tests, pure jvm, no robolectric and no android APIs:
+152 tests, pure jvm, no robolectric and no android APIs:
 
 - `domain/model/FieldModelTest` — paths, quoting, value parsing and formatting, types, categories,
   validation, quick values, tree search and normalisation.
@@ -317,7 +355,8 @@ dropped, and keys are redacted everywhere.
   humanising and cryptic-key detection.
 - `parsers/json/JsonSaveParserTest` — byte-exact round trips (compact and pretty), quoting styles,
   big integers, floats, unicode escapes, lenient inputs, node caps, corrupt files, gzip-wrapped
-  json opening read only, edits and rebuilds.
+  json opening read only, edits and rebuilds, and utf-8: accented and cjk values read as text, an
+  edit elsewhere leaves their bytes alone, and a truncated sequence still opens.
 - `parsers/xml/XmlSaveParserTest` — prolog, doctype, comments, cdata, attributes, self-closing tags,
   entity escaping, plist dicts, whitespace fidelity, edits and rebuilds.
 - `domain/session/SaveEditorTest` — the whole step 3 flow: open, propose, apply, reject, undo,
@@ -327,6 +366,12 @@ dropped, and keys are redacted everywhere.
 - `codecs/CodecRoundTripTest` — two small sample binaries: a crc32 header over 20 bytes of payload,
   and an adler32 trailer over an xor-obfuscated body. checksum repair after an edit, gzip and zlib
   round trips, and a corrupt stream failing loudly.
+- `data/history/EntryCodecTest` — what a transcript stores and what it must not: searchable bodies,
+  diff rows carrying both sides, verdicts surviving, field values and rebuilt bytes deliberately
+  gone, an unknown kind skipped instead of crashing, a corrupt payload falling back to its body.
+- `parsers/json/JsonPayloadTest` — savant's own json: compact output, integers staying integers,
+  string escaping, non-ascii text, tolerant accessors, and the rule that a stored string stays a
+  string unless the field declares a type.
 
 every parser test asserts the round trip in both directions: parse → write → parse equals the
 original, and unedited bytes come back identical.
@@ -416,7 +461,18 @@ reasonable choices made without asking, so they are written down:
     `takePersistableUriPermission`, two missing compose imports, and a missing hilt `@Binds` for
     `BackupStore` — all fixed. because runner logs are served from a host the sandbox cannot reach,
     a failing build pushes its own gradle log to the `ci-logs` branch (`.ci/build.log`), which is
-    readable through the ordinary contents api.
+    readable through the ordinary contents api. a failing *test* also pushes the junit xml messages,
+    because gradle's console line is only `AssertionError at File.kt:12`.
+14. **history stores text, not values.** see [the local database](#the-local-database). the
+    alternative — snapshotting the field tree per message — would make a transcript a second copy of
+    every save on the phone and would show numbers that no longer match the file.
+15. **a byte-based reader still has to decode utf-8 for values.** the json reader works on bytes so
+    an untouched file is written back identically, and it originally turned each byte into a char.
+    for ascii that is the same thing; for `José` it produced mojibake that was then re-encoded as
+    nine bytes the moment any field in that file was edited. string values now decode real utf-8
+    sequences, with overlong forms, surrogates and truncated sequences falling back to the raw byte.
+16. **named fields are display only.** a saved name is laid over the parsed tree in the ui; the
+    parser still reads and writes the real key, so a renamed field never changes the bytes.
 
 ---
 
@@ -429,6 +485,12 @@ reasonable choices made without asking, so they are written down:
   real type will use its own range.
 - the finder searches one open file. value diffs across two saves and typed binary scanning are
   step 5.
+- history search is a substring match over stored text, not ranked full text search, and it looks at
+  message bodies — a value that only ever appeared inside a field card is not in there, because
+  field values are not stored.
+- a restored transcript is read only. its export card keeps the verification verdict but not the
+  bytes, so share and save are off until an edit rebuilds the file.
+- api keys are still in memory only; encrypted storage arrives with the provider work in step 6.
 - `Android/data` is unreachable on android 11+ without extra privileges; share the file in instead.
   an optional shizuku path is a later decision, not a plan.
 
