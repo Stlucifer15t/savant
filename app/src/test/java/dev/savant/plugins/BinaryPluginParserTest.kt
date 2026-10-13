@@ -283,13 +283,18 @@ class BinaryPluginParserTest {
 
     @Test
     fun aStringFieldWithoutALengthIsSkippedWithAWarning() {
-        val json = """
-            {"gameName":"names","fileMatch":["quest*.sav"],"parser":"binary","fields":[
-              { "path": "player.name", "offset": 24, "type": "str" },
-              { "path": "player.gold", "offset": 8, "type": "u32" }
-            ]}
-        """.trimIndent()
-        val result = parse(payload(), json = json)
+        // The codec refuses to import this, so it is built directly: a plugin from an older savant,
+        // or one edited by hand, still has to fail softly rather than guess at a width.
+        val direct = GamePlugin(
+            id = "direct",
+            gameName = "names",
+            fileMatch = listOf("quest*.sav"),
+            fields = listOf(
+                FieldMapping(path = "player.name", type = "str", offset = 24),
+                FieldMapping(path = "player.gold", type = "u32", offset = 8),
+            ),
+        )
+        val result = BinaryPluginParser(direct).parse(ParseRequest(payload(), "quest1.sav"))
 
         assertNull(result.tree.node("player.name"))
         assertTrue(result.tree.warnings.any { it.contains("no length") })
