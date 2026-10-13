@@ -134,14 +134,14 @@ fun jsonToValue(json: Json?, type: dev.savant.domain.model.FieldType? = null): F
  */
 object JsonPayload {
 
-    fun write(value: Json): String = String(JsonWriter(JsonStyle.COMPACT).write(toNode(value)), Charsets.UTF_8)
+    fun write(value: Json): String = String(JsonWriter(JsonStyle.COMPACT).write(toNode(value, multiline = false)), Charsets.UTF_8)
 
     /**
      * Two space indented, trailing newline: for documents a person reads and edits, like an exported
      * plugin. The writer is the same one save files go through, so the output is ordinary json.
      */
     fun writePretty(value: Json): String =
-        String(JsonWriter(JsonStyle.PRETTY_TWO).write(toNode(value)), Charsets.UTF_8)
+        String(JsonWriter(JsonStyle.PRETTY_TWO).write(toNode(value, multiline = true)), Charsets.UTF_8)
 
     fun read(text: String): Json = fromNode(JsonReader(text.toByteArray(Charsets.UTF_8)).read())
 
@@ -149,14 +149,19 @@ object JsonPayload {
     fun readOrEmpty(text: String?): Json =
         if (text.isNullOrBlank()) Json.Null else runCatching { read(text) }.getOrDefault(Json.Null)
 
-    private fun toNode(value: Json): JsonNode = when (value) {
+    /**
+     * [multiline] is what the writer looks at to decide between one line and indented: it recovers
+     * that flag from a source file, so a document savant builds has to set it itself.
+     */
+    private fun toNode(value: Json, multiline: Boolean): JsonNode = when (value) {
         Json.Null -> JNull
         is Json.Bool -> JBool(value.value)
         is Json.Num -> JNumber(value.raw, value.value, value.integral)
         is Json.Str -> JString(value.value, null)
-        is Json.Arr -> JArray(value.items.map { toNode(it) }.toMutableList())
+        is Json.Arr -> JArray(value.items.map { toNode(it, multiline) }.toMutableList(), multiline)
         is Json.Obj -> JObject(
-            value.members.map { (key, child) -> JMember(null, key, toNode(child)) }.toMutableList(),
+            value.members.map { (key, child) -> JMember(null, key, toNode(child, multiline)) }.toMutableList(),
+            multiline,
         )
     }
 

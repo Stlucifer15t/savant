@@ -4,12 +4,14 @@ import dev.savant.domain.model.AiGuess
 import dev.savant.domain.model.FieldEdit
 import dev.savant.domain.model.FieldTree
 import dev.savant.domain.model.Confidence
+import dev.savant.domain.model.EditValidator
 import dev.savant.domain.model.Node
 import dev.savant.domain.model.SaveFormat
 import dev.savant.domain.parser.ApplyResult
 import dev.savant.domain.parser.ParseLogLine
 import dev.savant.domain.parser.ParseRequest
 import dev.savant.domain.parser.ParseResult
+import dev.savant.domain.parser.RejectedEdit
 import dev.savant.domain.parser.SaveDocument
 import dev.savant.domain.parser.SaveParser
 
@@ -119,9 +121,28 @@ class MappedParser(
 
         override val originalSize: Int get() = inner.originalSize
 
+        /**
+         * Validates against the *mapped* tree first.
+         *
+         * The base document only knows the file's own limits, so a plugin's maximum or its
+         * `editable: false` would be decoration rather than a rule if this did not check them here.
+         * What passes is handed to the base document, which still enforces everything it knows.
+         */
         override fun applyEdits(edits: List<FieldEdit>): ApplyResult {
-            val result = inner.applyEdits(edits)
-            return result.copy(tree = map(result.tree))
+            val mapped = map(inner.tree)
+            val allowed = mutableListOf<FieldEdit>()
+            val refused = mutableListOf<RejectedEdit>()
+            for (edit in edits) {
+                val node = mapped.node(edit.path)
+                val validation = node?.let { EditValidator.validate(it, edit.newValue) }
+                if (validation != null && !validation.ok) {
+                    refused += RejectedEdit(edit, validation.reason ?: "the plugin does not allow that")
+                } else {
+                    allowed += edit
+                }
+            }
+            val result = inner.applyEdits(allowed)
+            return ApplyResult(tree = map(result.tree), applied = result.applied, rejected = refused + result.rejected)
         }
 
         override fun toBytes(): ByteArray = inner.toBytes()

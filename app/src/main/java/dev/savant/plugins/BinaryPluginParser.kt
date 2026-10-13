@@ -80,8 +80,10 @@ class BinaryPluginParser(private val plugin: GamePlugin) : SaveParser {
             warnings += readOnlyReason
         } else if (checksum != null) {
             val ok = runCatching { checksum.matches(payload) }.getOrDefault(false)
-            log += ParseLogLine("checksum ${checksum.strategy}: ${if (ok) "matches" else "does not match, will be recomputed"}")
-            if (!ok) warnings += "the stored ${checksum.strategy} does not match the payload; savant recomputes it on export"
+            log += ParseLogLine("checksum ${checksum.strategy.id}: ${if (ok) "matches" else "does not match, will be recomputed"}")
+            if (!ok) {
+                warnings += "the stored ${checksum.strategy.id} does not match the payload; savant recomputes it on export"
+            }
         }
 
         val resolved = resolveFields(payload, warnings)
