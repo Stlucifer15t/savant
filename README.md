@@ -22,7 +22,7 @@ byte.
 | 4 | room database: history, sessions, search | **done** |
 | 5 | value finder across two saves, typed binary scanner | **done** |
 | 6 | ai providers, profiles, privacy controls | **done** |
-| 7 | plugin runtime: import/export game definitions | planned |
+| 7 | plugin runtime: import/export game definitions | **done** |
 | 8 | mcp connectors, web search, fetch | planned |
 | 9 | lz-string / rpgsave, sqlite, ini, unity plist | planned |
 
@@ -105,8 +105,9 @@ backups → restore reopens it in one tap.
   transcript again, marked as history; long press a field name to save a name for a cryptic key.
 - **files** — the open file, backups, recent imports, and history: every session savant opened plus
   a search box over the stored transcripts. restore, delete, reopen, view, clear.
-- **formats** — what parses today, what is planned, the codec/checksum matrix, and the plugin
-  schema written down ahead of the runtime.
+- **formats** — what parses today, what is planned, the codec/checksum matrix, the plugin schema, and
+  the installed plugins: import a json document, export or save one, delete one, or build one from the
+  offsets named in the finder.
 - **finder** — three modes behind one bar. **open file** searches the parsed tree by name, path,
   value, `category:flags` or `type:f32`, and expanding a hit shows the full field record and hands it
   to the chat. **compare saves** takes two saves of the same game and ranks every typed value that
@@ -132,6 +133,7 @@ app/src/main/java/dev/savant/
 │   ├── ai/                  NetworkLog, UrlConnectionTransport
 │   ├── db/                  room entities, daos, SavantDatabase (schema in app/schemas)
 │   ├── history/             ChatHistoryRepository, EntryCodec, NamedFieldRepository
+│   ├── plugins/             PluginStore (json document), PluginManager (registry sync)
 │   ├── session/             SessionStore — the one open save, shared by every screen
 │   ├── settings/            SavantSettings, SettingsRepository, ProfileStore, SecretStore +
 │   │                        EncryptedSecretStore (keystore backed)
@@ -144,6 +146,8 @@ app/src/main/java/dev/savant/
 │   │                        FieldCategory, Confidence, SaveFormat, ImportedFile, AiGuess
 │   ├── parser/              SaveParser, SaveDocument, ParserRegistry, ExportVerifier, limits
 │   └── session/             EditorSession, SaveEditor, ExportArtifact
+├── plugins/                 GamePlugin, PluginCodec, PluginMatcher, PluginDraft, the binary
+│   │                        plugin parser and the mapped text decorator
 ├── parsers/
 │   ├── FormatDetector.kt    magic bytes, text shape, blockers
 │   ├── categorize/          CategoryClassifier, Humanizer
@@ -156,7 +160,8 @@ app/src/main/java/dev/savant/
     ├── components/          FileChip, ParseProgress, FieldGroupCard, DiffCard, ExportCard,
     │                        CandidateRow, EmptyState, Messages, Primitives, TopBars, ValueTicker
     ├── chat/                ChatScreen, ChatViewModel
-    ├── files/  formats/  settings/
+    ├── files/  settings/
+    ├── formats/             FormatsScreen, FormatsViewModel — plugins, import, export, drafts
     ├── finder/              FinderScreen, FinderViewModel, ScanPanel (compare + scan modes)
 ```
 
@@ -241,8 +246,8 @@ exactly what happens today when a file is sniffed as gzip or zlib but no plugin 
 
 ## how to write a plugin
 
-the plugin runtime lands in step 7. the schema is fixed now so a game can be described before the
-importer exists, and the formats screen shows the same document.
+a plugin is a json document. savant reads it and does the bytes itself: nothing is downloaded,
+generated, interpreted as code or given network access. formats → plugins → import json.
 
 ```json
 {
@@ -258,20 +263,56 @@ importer exists, and the formats screen shows the same document.
 }
 ```
 
-- `gameName`, `fileMatch` — display name and glob patterns used during detection.
-- `parser` — `json`, `xml`, `ini`, `rpgsave`, `sqlite`, `plist` or `binary`.
-- `codec` — `none`, `gzip`, `zlib`, `xor` (+ `xorKey`), later `lzstring`, `aes`.
-- `checksum` — `strategy` (`crc32`, `adler32`, `md5`, `sha1`, `sha256`), `range` as
-  `[start, length]` with `-1` for "to the end", `storedAt` as `[offset, width]`, plus `endianness`
-  and `storedAsHexText` for text formats. this maps directly onto `ChecksumSpec`.
-- `fields` — path-based mappings for structured formats, or binary mappings with `offset`, `type`
-  (`i8…u64`, `f32`, `f64`, `bool`, `str`), `endianness`, `length`, and for arrays a `pointer` plus
-  `stride`.
-- `rename` — optional display names for cryptic keys; savant marks them as ai guesses either way.
+- `gameName`, `fileMatch` — display name and glob patterns used during detection. `magic` (hex bytes)
+  is optional and, with a codec, is matched against the decoded payload. **a plugin that declares
+  neither can never match**: savant will not let one claim every binary file on the phone.
+- `parser` — `binary`, `json` or `xml` today; `ini`, `rpgsave`, `sqlite` and `plist` are refused on
+  import until step 9 implements them.
+- `codec` — `none`, `gzip`, `zlib`, `xor` (+ `xorKey` as hex). `lzstring` and `aes` arrive with their
+  formats. a plugin-declared codec is the only way a compressed file becomes writable; a codec savant
+  only *sniffs* still opens read only.
+- `endianness` — the file's default byte order, `le` or `be`; any field can override it.
+- `checksum` — `strategy` (`crc32`, `adler32`, `md5`, `sha1`, `sha256`), `range` as `[start, length]`
+  with a negative length meaning "to the end", `storedAt` as `[offset, width]`, plus `endianness`,
+  `asHexText` and `seed`. it maps onto `ChecksumSpec`, the stored digest is carved out of its own
+  range when it falls inside it, and a strategy savant does not implement opens the file read only
+  rather than writing a save with a bad checksum.
+- `fields` — three shapes, and each field is exactly one of them:
+  - `offset` + `type` — a fixed position in the decoded payload;
+  - `pointer` + `stride` (+ optional `count`, `recordOffset`, `pointerType`, `pointerBase`) — an array
+    of records. the value at `pointer` is read as an offset into the payload, minus `pointerBase` for
+    games that store a load address. `[*]` in the path becomes the index, and without `count` as many
+    records are read as fit, up to 512;
+  - `path` alone, with `parser: json` or `xml` — the file is parsed by savant's own parser and the
+    mapping only adds a name, a category and limits.
+- `type` — `i8`…`u64`, `f32`, `f64`, `bool`, `str`. `str` needs a `length` in bytes; it reads to the
+  first NUL and writes NUL padded, and a value too long for the field is **refused**, not truncated.
+- `name`, `category`, `min`, `max`, `editable`, `notes` — per field. `min` and `max` are hard limits
+  the editor enforces, and `editable: false` makes a field read only.
+- `rename` — display names for cryptic keys with no offsets and no types: `{"gld": "Gold"}`. valid as
+  a plugin on its own, matched on the raw key or the last path segment, and it outranks what savant
+  guessed from the key. marked as a guess either way, because it is somebody's note.
 
-rules the runtime will enforce: a plugin describes data, it is never executed; it cannot request
-network access; imports are shown as json before they are accepted; and a plugin-declared codec is
-the only way a compressed file becomes writable.
+an import is refused with reasons, not accepted with warnings, when: the schema is newer than savant,
+`gameName` is missing, there is neither a field nor a rename entry, a type or codec or parser is
+unknown, a binary field has no position, a text field carries an offset, a pointer has no stride, a
+string has no length, or two fields claim the same path.
+
+two kinds of plugin, two kinds of parser:
+
+| kind | what happens |
+| --- | --- |
+| `binary` | `BinaryPluginParser` decodes the payload, reads every mapping, and on write puts the values back, recomputes the checksum over the payload, and re-encodes. an untouched file comes back byte for byte |
+| `json` / `xml` | `MappedParser` decorates savant's own parser: same bytes, same round trip, plus names, categories and limits. the mapping is re-applied to every tree the document produces, so a name does not vanish after the first edit |
+
+for a text format a plugin's claim *adds* to the base parser's confidence instead of competing with
+it — "this is json" and "this is example quest's save" are both true — and a file the plugin does not
+claim falls through to the plain parser, so one game's plugin does not start winning every json save
+on the phone.
+
+**from the finder**: offsets you named in the byte finder become a binary plugin in one tap. that is
+what naming them was for. the draft starts with a `*.bin` file match and says so, because a plugin
+that claims every binary file is worse than no plugin.
 
 ---
 
@@ -323,6 +364,28 @@ the eight tools, in `ai/Tools.kt`:
 `FieldEdit`s — the diff preview is the gate for a model exactly as it is for a tap. `AiPayload`
 handles the privacy rules: over 200 kb only a trimmed field summary is sent, long text values are
 dropped, and keys are redacted everywhere.
+
+---
+
+## plugins
+
+the runtime, in one line each:
+
+- `plugins/GamePlugin.kt` — the model: `GamePlugin`, `FieldMapping`, `PluginChecksum`, the parser
+  kinds, where a plugin came from.
+- `plugins/PluginCodec.kt` — json ⇄ model, with the validation rules above. export is pretty printed,
+  because a plugin is a document a person reads, edits and shares.
+- `plugins/PluginMatcher.kt` — name globs and magic bytes, and the refusal to match anything when a
+  plugin declares neither.
+- `plugins/BinaryPluginParser.kt` — the offsets parser and its live document.
+- `plugins/MappedParser.kt` — the decorator for json and xml.
+- `plugins/PluginDraft.kt` — named offsets from the finder, as a plugin.
+- `data/plugins/PluginStore.kt` — the installed plugins as one json document in DataStore. not a
+  table: the same bytes are what export writes and import reads.
+- `data/plugins/PluginManager.kt` — one collector that keeps the registry in step with the store,
+  started from `SavantApplication` so a file shared in before any screen exists still sees them.
+  `ParserRegistry` is copy on write and can register, replace and drop plugin parsers; a plugin
+  replaces its own previous version and never a built in parser.
 
 ---
 
@@ -454,7 +517,7 @@ mapping — so the work done here is not thrown away when the format gets a real
 ./gradlew :app:testDebugUnitTest
 ```
 
-221 tests, pure jvm, no robolectric and no android APIs:
+267 tests, pure jvm, no robolectric and no android APIs:
 
 - `domain/model/FieldModelTest` — paths, quoting, value parsing and formatting, types, categories,
   validation, quick values, tree search and normalisation.
@@ -489,6 +552,19 @@ mapping — so the work done here is not thrown away when the format gets a real
   that throws, the bounded loop, cleartext refused before anything is sent, cleartext allowed to a
   local box, the log carrying the shape and not the contents, generation settings coming from the
   profile, the network policy, and the profile codec.
+- `plugins/PluginCodecTest` — the exact json the formats screen has shown since step 3 imports as is,
+  export→import round trips, a list document and a single one, every refusal with its reason, hex
+  keys in the shapes people write them, the checksum becoming a real spec with its own bytes excluded,
+  and finder offset keys parsing back into offset, type and byte order.
+- `plugins/BinaryPluginParserTest` — a 96 byte sample save with a magic header, a crc32 over the body,
+  mixed width fields and a pointer to an array of records: detection by name and header, reads at
+  their offsets, `[*]` expansion, inferred array counts, `recordOffset`, an untouched file coming back
+  byte for byte, an edit changing only its own bytes and repairing the checksum, hard limits from the
+  plugin, string and flag fields, codec wrapping, and the loud failures.
+- `plugins/MappedParserTest` — a json save with a plugin laid over it: renaming, categories, limits,
+  byte identical writes, names surviving an edit, detection only preferring the plugin for files it
+  claims, wildcards over array elements, a type disagreement kept as a note, `rename`, and
+  `editable: false`.
 - `domain/finder/BinaryValuesTest` — typed reads in both byte orders, sign extension for narrow
   integers, float and double windows, windows that do not fit, offset and hex formatting, and the
   two shape tests ranking depends on: printable text, and no zero bytes.
@@ -617,7 +693,18 @@ reasonable choices made without asking, so they are written down:
 22. **a half configured profile fails loudly.** falling back to the on device engine when a key is
     missing would be kinder to the code and worse for the person: they configured a provider, asked a
     question, and got an answer from something else. savant says what is missing instead.
-23. **the cleartext gate lives in code, not in the platform config.** android can allow or forbid
+24. **a plugin is data.** there is no script, no bytecode, no expression language and no fetch: a
+    plugin says where the fields are, and the same deterministic kotlin that reads savant's own
+    formats does the reading and writing. that is why importing one cannot execute anything, and why
+    the whole runtime is unit tested on the host.
+25. **a mapped plugin re-applies itself to every tree the document produces.** decorating the parse
+    result once would show the plugin's names for one frame and lose them at the first edit, because
+    the base document hands back its own tree. the mapping is a function of the tree, applied on the
+    way out.
+26. **a plugin's limits are enforced, not displayed.** a mapped document validates against the mapped
+    tree before handing an edit to the base parser, so `max` and `editable: false` are rules. the base
+    parser only knows the file's own limits, and without this a plugin's maximum would be decoration.
+27. **the cleartext gate lives in code, not in the platform config.** android can allow or forbid
     cleartext per *domain*, and a local model box is an ip address, not a domain. so the platform is
     told cleartext is permitted and `NetworkPolicy` refuses every http url that is not on the phone's
     own network — a rule with tests, rather than a config nobody can express.
@@ -648,6 +735,12 @@ reasonable choices made without asking, so they are written down:
 - a provider is only as good as its tool calling. a model that answers in prose instead of calling
   `set_field` gets a text reply and no edits; savant does not parse edits out of prose, because a
   guessed path is worse than no answer.
+- a plugin's `pointer` is read as an offset into the decoded payload. a game that stores a real memory
+  address needs `pointerBase`, and a pointer chain (a pointer to a pointer) is not described by the
+  schema yet.
+- `formats` is still an enum, so every binary plugin reports the `BINARY` badge and they are told
+  apart by plugin id. a plugin cannot add a format to the list on the formats screen; it adds a parser
+  that claims files.
 - mcp connectors, `web_search` and `fetch_url` are step 8; the settings rows for them are still inert.
 - `Android/data` is unreachable on android 11+ without extra privileges; share the file in instead.
   an optional shizuku path is a later decision, not a plan.
