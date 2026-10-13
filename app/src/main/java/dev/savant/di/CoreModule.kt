@@ -45,7 +45,19 @@ object CoreModule {
 
     @Provides
     @Singleton
-    fun parserRegistry(): ParserRegistry = ParserRegistry(listOf(JsonSaveParser(), XmlSaveParser()))
+    fun jsonSaveParser(): JsonSaveParser = JsonSaveParser()
+
+    @Provides
+    @Singleton
+    fun xmlSaveParser(): XmlSaveParser = XmlSaveParser()
+
+    /**
+     * The parsers savant ships. Plugin parsers are added to this registry at runtime by
+     * [dev.savant.data.plugins.PluginManager]; a plugin replaces nothing here, it registers beside it.
+     */
+    @Provides
+    @Singleton
+    fun parserRegistry(json: JsonSaveParser, xml: XmlSaveParser): ParserRegistry = ParserRegistry(listOf(json, xml))
 
     @Provides
     @Singleton

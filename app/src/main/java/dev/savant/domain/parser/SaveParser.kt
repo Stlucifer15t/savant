@@ -114,6 +114,14 @@ interface SaveParser {
 
     val format: SaveFormat
 
+    /**
+     * The plugin this parser came from, or null for one savant ships.
+     *
+     * Several plugins can claim the same format — two games both storing binary saves — so the id is
+     * what tells them apart when a registry is asked for "the binary parser".
+     */
+    val pluginId: String? get() = null
+
     fun detect(bytes: ByteArray, fileName: String?): Confidence
 
     fun parse(request: ParseRequest): ParseResult

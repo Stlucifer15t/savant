@@ -136,6 +136,13 @@ object JsonPayload {
 
     fun write(value: Json): String = String(JsonWriter(JsonStyle.COMPACT).write(toNode(value)), Charsets.UTF_8)
 
+    /**
+     * Two space indented, trailing newline: for documents a person reads and edits, like an exported
+     * plugin. The writer is the same one save files go through, so the output is ordinary json.
+     */
+    fun writePretty(value: Json): String =
+        String(JsonWriter(JsonStyle.PRETTY_TWO).write(toNode(value)), Charsets.UTF_8)
+
     fun read(text: String): Json = fromNode(JsonReader(text.toByteArray(Charsets.UTF_8)).read())
 
     /** Never throws: a corrupt payload degrades to [Json.Null] instead of taking the screen down. */

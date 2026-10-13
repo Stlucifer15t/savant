@@ -3,6 +3,8 @@ package dev.savant.domain.finder
 import dev.savant.domain.model.Endianness
 import dev.savant.domain.model.FieldType
 import dev.savant.domain.model.FieldValue
+import dev.savant.domain.model.asDouble
+import dev.savant.domain.model.asLong
 
 /**
  * Typed reads over raw bytes.
@@ -57,6 +59,33 @@ object BinaryValues {
         if (size >= 8) return raw
         val shift = 64 - size * 8
         return raw shl shift shr shift
+    }
+
+    /**
+     * Writes one typed value into [bytes] at [offset], in place.
+     *
+     * False when the type is not fixed width or the window does not fit — a plugin field past the end
+     * of a shorter save is a warning, not a crash. The value is truncated or sign extended to the
+     * field's own width, so an i16 stays two bytes even when the user typed 999999: the caller
+     * validates the range before getting here.
+     */
+    fun writeInto(bytes: ByteArray, offset: Int, value: FieldValue, type: FieldType, endian: Endianness): Boolean {
+        val size = type.sizeBytes ?: return false
+        if (offset < 0 || offset + size > bytes.size) return false
+        val bits: Long = when (type) {
+            FieldType.FLOAT -> {
+                val number = value.asDouble() ?: return false
+                number.toFloat().toRawBits().toLong() and 0xFFFFFFFFL
+            }
+
+            FieldType.DOUBLE -> value.asDouble()?.toRawBits() ?: return false
+            else -> value.asLong() ?: value.asDouble()?.toLong() ?: return false
+        }
+        for (i in 0 until size) {
+            val shift = if (endian == Endianness.BIG) 8 * (size - 1 - i) else 8 * i
+            bytes[offset + i] = ((bits ushr shift) and 0xFF).toByte()
+        }
+        return true
     }
 
     /** `0x000001f0`, the way every hex editor writes it. */

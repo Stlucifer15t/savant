@@ -13,13 +13,46 @@ data class DetectionResult(
 /**
  * Asks every registered parser to score the file and keeps the ranking.
  *
- * Plain class on purpose: it is constructed by Hilt in the app and directly in unit tests.
+ * Plain class on purpose: it is constructed by Hilt in the app and directly in unit tests. The list
+ * is copy on write because plugins arrive and leave at runtime while a detection is running on a
+ * background thread — a reader always sees a consistent snapshot, and registration never blocks a
+ * parse.
  */
-class ParserRegistry(private val parsers: List<SaveParser>) {
+class ParserRegistry(parsers: List<SaveParser>) {
 
-    val formats: List<SaveFormat> get() = parsers.map { it.format }
+    private val parsers = java.util.concurrent.CopyOnWriteArrayList(parsers)
 
-    fun parserFor(format: SaveFormat): SaveParser? = parsers.firstOrNull { it.format == format }
+    /** Everything installed, savant's own parsers first. */
+    val installed: List<SaveParser> get() = parsers.toList()
+
+    /** The ones a plugin added. Each carries the plugin id it came from. */
+    val pluginParsers: List<SaveParser> get() = parsers.filter { it.pluginId != null }
+
+    val formats: List<SaveFormat> get() = parsers.map { it.format }.distinct()
+
+    /**
+     * Replaces any parser from the same plugin, so re-importing an edited plugin cannot leave two
+     * versions of it fighting over the same file.
+     */
+    fun register(parser: SaveParser) {
+        val id = parser.pluginId
+        if (id != null) parsers.removeAll { it.pluginId == id }
+        parsers.add(parser)
+    }
+
+    fun unregister(pluginId: String) {
+        parsers.removeAll { it.pluginId == pluginId }
+    }
+
+    /** Drops every plugin parser. Used when the plugin list is reloaded wholesale. */
+    fun clearPlugins() {
+        parsers.removeAll { it.pluginId != null }
+    }
+
+    /** [pluginId] wins when savant is told which plugin to use; otherwise any parser for the format. */
+    fun parserFor(format: SaveFormat, pluginId: String? = null): SaveParser? =
+        parsers.firstOrNull { it.format == format && pluginId != null && it.pluginId == pluginId }
+            ?: parsers.firstOrNull { it.format == format }
 
     /** All scores above zero, best first. Shown in chat when detection is ambiguous. */
     fun candidates(bytes: ByteArray, fileName: String?): List<DetectionResult> =
@@ -41,7 +74,7 @@ class ParserRegistry(private val parsers: List<SaveParser>) {
         hints: ParseHints = ParseHints(),
     ): ParseResult {
         val detection = preferred?.let { format ->
-            val parser = parserFor(format)
+            val parser = parserFor(format, hints.pluginId)
                 ?: throw SavantParserException("no parser installed for ${format.badge}", format)
             DetectionResult(parser, format, Confidence.certain("format chosen by ${hints.pluginId ?: "user"}"))
         } ?: best(bytes, fileName)
