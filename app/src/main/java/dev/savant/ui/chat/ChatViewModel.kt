@@ -27,6 +27,8 @@ import dev.savant.domain.session.SaveEditor
 import dev.savant.parsers.categorize.Humanizer
 import dev.savant.domain.chat.ChatEntry
 import dev.savant.domain.chat.ChatRole
+import dev.savant.domain.chat.PendingCall
+import dev.savant.domain.chat.ConfirmEntry
 import dev.savant.domain.chat.DiffEntry
 import dev.savant.domain.chat.DiffStatus
 import dev.savant.domain.chat.ExportEntry
@@ -235,9 +237,9 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    private suspend fun handle(text: String) {
+    private suspend fun handle(text: String, approved: Set<String> = emptySet()) {
         val session = sessions.session.value
-        when (val reply = assistant.respond(AssistantInput(text, session))) {
+        when (val reply = assistant.respond(AssistantInput(text, session, approved = approved))) {
             is AssistantReply.Text -> assistantText(reply.lines)
 
             is AssistantReply.Failure -> assistantText(reply.lines, isError = true)
@@ -252,6 +254,45 @@ class ChatViewModel @Inject constructor(
 
                 else -> assistantText(reply.lines)
             }
+
+            // Nothing was sent. The card stays in the transcript until the user decides, and the
+            // same question is asked again with the approval attached.
+            is AssistantReply.Confirmation -> {
+                assistantText(reply.lines)
+                awaiting = Waiting(text, reply.calls.map { it.key }.toSet())
+                append(ConfirmEntry(newId(), reply.calls))
+            }
+        }
+    }
+
+    /** The turn a confirmation card belongs to, so approving it can ask the same question again. */
+    private data class Waiting(val text: String, val keys: Set<String>)
+
+    private var awaiting: Waiting? = null
+
+    fun onAllowCalls(entryId: String) {
+        val waiting = awaiting ?: return
+        awaiting = null
+        resolve(entryId, "allowed")
+        setBusy(true)
+        viewModelScope.launch {
+            try {
+                handle(waiting.text, approved = waiting.keys)
+            } finally {
+                setBusy(false)
+            }
+        }
+    }
+
+    fun onDenyCalls(entryId: String) {
+        awaiting = null
+        resolve(entryId, "denied")
+        assistantText(listOf("cancelled — nothing was sent"))
+    }
+
+    private fun resolve(entryId: String, how: String) {
+        replaceEntry(entryId) { entry ->
+            if (entry is ConfirmEntry) entry.copy(resolved = how) else entry
         }
     }
 

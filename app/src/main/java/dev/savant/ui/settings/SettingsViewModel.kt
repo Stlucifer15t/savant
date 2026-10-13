@@ -11,6 +11,13 @@ import dev.savant.ai.provider.HttpTransport
 import dev.savant.ai.provider.NetworkEvent
 import dev.savant.ai.provider.NetworkPolicy
 import dev.savant.ai.provider.ProfileSet
+import dev.savant.ai.web.SearchProvider
+import dev.savant.ai.web.WebPolicy
+import dev.savant.data.mcp.McpServerStore
+import dev.savant.mcp.McpAuth
+import dev.savant.mcp.McpClient
+import dev.savant.mcp.McpServer
+import dev.savant.mcp.McpTool
 import dev.savant.data.ai.NetworkLog
 import dev.savant.data.history.ChatHistoryRepository
 import dev.savant.data.history.HistoryCounts
@@ -55,6 +62,17 @@ data class SettingsUiState(
     val keyIsSet: Boolean = false,
     val ping: PingState? = null,
     val network: List<NetworkEvent> = emptyList(),
+    // web tools
+    val searchKeyDraft: String = "",
+    val searchKeyIsSet: Boolean = false,
+    // connectors
+    val connectors: List<McpServer> = emptyList(),
+    val connectorTools: Map<String, List<McpTool>> = emptyMap(),
+    val editingServer: McpServer? = null,
+    val serverKeyDraft: String = "",
+    val serverKeyIsSet: Boolean = false,
+    val connectingId: String? = null,
+    val connectResult: String? = null,
 ) {
     val active: ProviderProfile? get() = profiles.firstOrNull { it.id == activeId }
 
@@ -63,6 +81,12 @@ data class SettingsUiState(
 
     /** What savant will do with this profile's endpoint, in one line. */
     fun verdictFor(profile: ProviderProfile): NetworkPolicy.Verdict = NetworkPolicy.assess(profile.effectiveBaseUrl)
+
+    val allowList: List<String> get() = WebPolicy.parseAllowList(settings.allowListedDomains)
+
+    val searchProvider: SearchProvider get() = SearchProvider.fromId(settings.searchProvider)
+
+    fun toolsFor(serverId: String): List<McpTool> = connectorTools[serverId] ?: emptyList()
 }
 
 /**
@@ -83,6 +107,7 @@ class SettingsViewModel @Inject constructor(
     private val secrets: SecretStore,
     private val transport: HttpTransport,
     private val networkLog: NetworkLog,
+    private val connectors: McpServerStore,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SettingsUiState())
@@ -110,6 +135,14 @@ class SettingsViewModel @Inject constructor(
         }
         viewModelScope.launch {
             networkLog.entries.collect { events -> _state.update { it.copy(network = events) } }
+        }
+        viewModelScope.launch {
+            connectors.set.collect { set ->
+                _state.update { it.copy(connectors = set.servers, connectorTools = set.tools) }
+            }
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(searchKeyIsSet = secrets.has(SecretStore.SEARCH_KEY)) }
         }
         viewModelScope.launch {
             _state.update { it.copy(secretsEncrypted = secrets.encrypted) }
@@ -274,6 +307,155 @@ class SettingsViewModel @Inject constructor(
         refreshKeyMasks(profiles.current())
         _state.update { it.copy(keyDraft = "", keyIsSet = false, notice = "every stored key was deleted") }
     }
+
+    // ---- web tools --------------------------------------------------------------------
+
+    fun onWebTools(enabled: Boolean) = viewModelScope.launch { settings.setWebTools(enabled) }
+    fun onSearchApi(enabled: Boolean) = viewModelScope.launch { settings.setSearchApi(enabled) }
+    fun onConfirmWebCalls(enabled: Boolean) = viewModelScope.launch { settings.setConfirmWebCalls(enabled) }
+    fun onAllowListChanged(value: String) = viewModelScope.launch { settings.setAllowListedDomains(value) }
+
+    fun onSearchProvider(provider: SearchProvider) = viewModelScope.launch { settings.setSearchProvider(provider.id) }
+
+    fun onSearchKeyDraft(value: String) = _state.update { it.copy(searchKeyDraft = value) }
+
+    /** Blank clears it; anything else replaces it. The key never goes back into the field. */
+    fun onSaveSearchKey() {
+        val draft = _state.value.searchKeyDraft
+        secrets.put(SecretStore.SEARCH_KEY, draft)
+        viewModelScope.launch {
+            settings.setSearchApiKeyMask(AiPayload.redactKey(draft))
+            _state.update {
+                it.copy(
+                    searchKeyDraft = "",
+                    searchKeyIsSet = secrets.has(SecretStore.SEARCH_KEY),
+                    notice = if (draft.isBlank()) "search key removed" else "search key stored as ${AiPayload.redactKey(draft)}",
+                )
+            }
+        }
+    }
+
+    // ---- connectors -------------------------------------------------------------------
+
+    fun onAddConnector() {
+        _state.update {
+            it.copy(
+                editingServer = McpServer(id = "", name = "", url = ""),
+                serverKeyDraft = "",
+                serverKeyIsSet = false,
+                connectResult = null,
+            )
+        }
+    }
+
+    fun onEditConnector(server: McpServer) {
+        _state.update {
+            it.copy(
+                editingServer = server,
+                serverKeyDraft = "",
+                serverKeyIsSet = secrets.has(SecretStore.MCP_PREFIX + server.id),
+                connectResult = null,
+            )
+        }
+    }
+
+    fun onCancelServer() = _state.update { it.copy(editingServer = null, serverKeyDraft = "") }
+
+    fun onServerName(value: String) = editServer { it.copy(name = value) }
+    fun onServerUrl(value: String) = editServer { it.copy(url = value) }
+    fun onServerAuth(auth: McpAuth) = editServer { it.copy(auth = auth) }
+    fun onServerAuthHeader(value: String) = editServer { it.copy(authHeader = value) }
+    fun onServerConfirm(enabled: Boolean) = editServer { it.copy(confirmEveryCall = enabled) }
+    fun onServerKeyDraft(value: String) = _state.update { it.copy(serverKeyDraft = value) }
+
+    private fun editServer(change: (McpServer) -> McpServer) {
+        _state.update { state ->
+            val current = state.editingServer ?: return@update state
+            state.copy(editingServer = change(current))
+        }
+    }
+
+    fun onSaveConnector() {
+        val draft = _state.value.editingServer ?: return
+        val url = draft.url.trim()
+        if (url.isBlank()) {
+            _state.update { it.copy(notice = "a connector needs a url") }
+            return
+        }
+        val verdict = NetworkPolicy.assess(url)
+        if (!verdict.allowed) {
+            _state.update { it.copy(notice = (verdict as NetworkPolicy.Verdict.Refused).reason) }
+            return
+        }
+        val server = draft.copy(
+            id = draft.id.ifBlank { dev.savant.mcp.McpCodec.newId(draft.name.ifBlank { url }) },
+            name = draft.name.trim().ifBlank { url },
+            url = url,
+        )
+        viewModelScope.launch {
+            connectors.save(server)
+            val key = _state.value.serverKeyDraft
+            if (key.isNotBlank()) secrets.put(SecretStore.MCP_PREFIX + server.id, key)
+            _state.update {
+                it.copy(
+                    editingServer = null,
+                    serverKeyDraft = "",
+                    notice = "saved ${server.name}" + if (key.isNotBlank()) " · key ${AiPayload.redactKey(key)}" else "",
+                )
+            }
+        }
+    }
+
+    fun onDeleteConnector(id: String) = viewModelScope.launch {
+        connectors.delete(id)
+        secrets.clear(SecretStore.MCP_PREFIX + id)
+        _state.update {
+            it.copy(
+                notice = "connector removed",
+                editingServer = if (it.editingServer?.id == id) null else it.editingServer,
+            )
+        }
+    }
+
+    fun onToggleConnector(id: String, enabled: Boolean) = viewModelScope.launch { connectors.setEnabled(id, enabled) }
+
+    fun onToggleConnectorConfirm(id: String, confirm: Boolean) = viewModelScope.launch {
+        connectors.setConfirmEveryCall(id, confirm)
+    }
+
+    /**
+     * Handshake, then list tools.
+     *
+     * The tool list is stored, because "what can the model call" has to be answerable without a
+     * network round trip — it is part of the prompt, and the prompt is built before anything is sent.
+     */
+    fun onConnect(id: String) {
+        val server = _state.value.connectors.firstOrNull { it.id == id } ?: return
+        viewModelScope.launch {
+            _state.update { it.copy(connectingId = id, connectResult = null) }
+            val key = _state.value.serverKeyDraft.ifBlank { secrets.get(SecretStore.MCP_PREFIX + id) }
+            val logging = _state.value.settings.logNetworkRequests
+            val client = McpClient(server, { key }, transport) { event -> if (logging) networkLog.record(event) }
+
+            val handshake = client.initialize()
+            if (!handshake.ok) {
+                _state.update { it.copy(connectingId = null, connectResult = "${server.name}: ${handshake.detail}") }
+                return@launch
+            }
+            val listed = client.listTools()
+            val updated = server.copy(
+                protocolVersion = handshake.protocolVersion ?: server.protocolVersion,
+                serverVersion = handshake.serverVersion ?: handshake.serverName ?: server.serverVersion,
+                lastSeen = System.currentTimeMillis(),
+            )
+            connectors.recordConnection(updated, listed.tools)
+            _state.update {
+                it.copy(connectingId = null, connectResult = "${server.name}: ${handshake.detail} · ${listed.detail}")
+            }
+        }
+    }
+
+    fun onConnectResultShown() = _state.update { it.copy(connectResult = null) }
 
     // ---- data -----------------------------------------------------------------------
 

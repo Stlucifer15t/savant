@@ -101,6 +101,37 @@ data class ExportEntry(
     override val atMillis: Long = System.currentTimeMillis(),
 ) : ChatEntry
 
+/**
+ * A call that has not happened yet, and needs the user's ok first.
+ *
+ * [key] is what an approval is recorded against, so allowing one fetch does not allow the next one and
+ * a re-run of the same turn recognises what was already approved. It lives here, in the transcript
+ * vocabulary, because the chat shows it and the domain must not depend on the web layer.
+ */
+data class PendingCall(
+    val key: String,
+    val tool: String,
+    val summary: String,
+    val target: String,
+)
+
+/**
+ * A call that has not happened, waiting for the user.
+ *
+ * Only web and connector calls land here. Editing a save file does not need this gate, because the
+ * diff preview is a stronger one: it shows the old value and the new one before anything is written.
+ * A call that leaves the device shows nothing until somebody says yes.
+ */
+data class ConfirmEntry(
+    override val id: String,
+    val calls: List<PendingCall>,
+    /** Null while it is waiting; what happened, once it is not. */
+    val resolved: String? = null,
+    override val atMillis: Long = System.currentTimeMillis(),
+) : ChatEntry {
+    val pending: Boolean get() = resolved == null
+}
+
 /** Read-only notice: parsed, but savant will not write this one. */
 data class NoticeEntry(
     override val id: String,

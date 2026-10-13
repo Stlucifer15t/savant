@@ -64,6 +64,7 @@ import dev.savant.R
 import dev.savant.domain.model.EditValidator
 import dev.savant.domain.model.FieldCategory
 import dev.savant.domain.model.Node
+import dev.savant.domain.chat.ConfirmEntry
 import dev.savant.domain.chat.ChatEntry
 import dev.savant.domain.chat.ChatRole
 import dev.savant.domain.chat.DiffEntry
@@ -220,6 +221,8 @@ fun ChatScreen(
                         onCancelDiff = viewModel::onCancelDiff,
                         onRevertRow = viewModel::onRevertRow,
                         onRename = { node -> renaming = node },
+                        onAllowCalls = viewModel::onAllowCalls,
+                        onDenyCalls = viewModel::onDenyCalls,
                         onShare = {
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                             viewModel.onShareExport()
@@ -273,6 +276,8 @@ private fun EntryRow(
     onCancelDiff: (String) -> Unit,
     onRevertRow: (String, String) -> Unit,
     onRename: (Node) -> Unit,
+    onAllowCalls: (String) -> Unit,
+    onDenyCalls: (String) -> Unit,
     onShare: () -> Unit,
     onSave: () -> Unit,
 ) {
@@ -345,6 +350,8 @@ private fun EntryRow(
         )
 
         is NoticeEntry -> NoticeCard(title = entry.title, lines = entry.lines)
+
+        is ConfirmEntry -> ConfirmCard(entry = entry, onAllow = onAllowCalls, onDeny = onDenyCalls)
     }
 }
 
@@ -535,6 +542,51 @@ private fun RenamePanel(node: Node, current: String, onCancel: () -> Unit, onSav
                 onClick = { onSave(draft) },
                 enabled = draft.trim().isNotEmpty(),
             )
+        }
+    }
+}
+
+/**
+ * A call that leaves the device, waiting for a yes.
+ *
+ * Flat, in the transcript, with the target spelled out: the point of the card is that the user can
+ * read what would be sent before it is sent. Once decided it stays in the transcript as a record
+ * rather than disappearing, and a restored one can never be approved again.
+ */
+@Composable
+private fun ConfirmCard(entry: ConfirmEntry, onAllow: (String) -> Unit, onDeny: (String) -> Unit) {
+    val colors = Savant.colors
+    SavantPanel(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = SavantDimens.gutter, vertical = 6.dp),
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            SectionLabel(text = if (entry.pending) "needs your ok" else "call ${entry.resolved}")
+            entry.calls.forEach { call ->
+                Text(
+                    text = "${call.summary} · ${call.target}",
+                    style = SavantMono.value,
+                    color = colors.text,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(text = call.tool, style = SavantMono.tag, color = colors.textFaint)
+            }
+            Hairline()
+            Text(
+                text = "nothing has been sent. a result comes back marked as untrusted, and no web or connector " +
+                    "result can change a save file — only the diff preview can.",
+                style = SavantMono.path,
+                color = colors.textMuted,
+            )
+            if (entry.pending) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GhostButton(text = "deny", onClick = { onDeny(entry.id) })
+                    Spacer(Modifier.weight(1f))
+                    AccentButton(text = "allow", onClick = { onAllow(entry.id) })
+                }
+            }
         }
     }
 }

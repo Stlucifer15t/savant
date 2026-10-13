@@ -1,5 +1,6 @@
 package dev.savant.ai
 
+import dev.savant.domain.chat.PendingCall
 import dev.savant.domain.model.FieldEdit
 import dev.savant.domain.session.EditorSession
 
@@ -29,6 +30,14 @@ data class AssistantInput(
     val text: String,
     val session: EditorSession?,
     val history: List<LlmMessage> = emptyList(),
+    /**
+     * Calls the user has already allowed, by [PendingCall.key].
+     *
+     * Empty on a fresh turn. When a web or connector call needs an ok, the turn ends with
+     * [AssistantReply.Confirmation] and the chat sends the same text again with the approved keys, so
+     * an approval covers one call and not the session.
+     */
+    val approved: Set<String> = emptySet(),
 )
 
 sealed interface AssistantReply {
@@ -47,4 +56,16 @@ sealed interface AssistantReply {
 
     /** Something the user has to fix: no file, unknown field, invalid value. */
     data class Failure(override val lines: List<String>) : AssistantReply
+
+    /**
+     * Nothing was sent, and nothing will be until the user says so.
+     *
+     * Only web and connector calls land here. A tool that edits a save file does not need this gate,
+     * because the diff preview is a stronger one: it shows the old and new value before anything is
+     * written.
+     */
+    data class Confirmation(
+        override val lines: List<String>,
+        val calls: List<PendingCall>,
+    ) : AssistantReply
 }

@@ -31,10 +31,19 @@ data class SavantSettings(
     val apiKeyMask: String = "",
     val sendFieldValues: Boolean = true,
 
-    // search + mcp (step 6 / 8)
+    // web tools + connectors
+    /** Master switch for `web_search` and `fetch_url`. Off by default: they leave the device. */
+    val webToolsEnabled: Boolean = false,
     val searchApiEnabled: Boolean = false,
+    val searchProvider: String = "duckduckgo",
     val searchApiKeyMask: String = "",
+    /** Ask before every web call. Turning this off is a decision about convenience, not safety. */
+    val confirmWebCalls: Boolean = true,
     val mcpConfirmEveryCall: Boolean = true,
+    /**
+     * Domains `fetch_url` may read, separated by commas or spaces. Empty means "any domain, but ask
+     * first" rather than "any domain, silently" — see [dev.savant.ai.web.WebPolicy].
+     */
     val allowListedDomains: String = "",
 
     // data

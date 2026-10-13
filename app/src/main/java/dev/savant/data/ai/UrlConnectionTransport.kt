@@ -46,8 +46,21 @@ class UrlConnectionTransport @Inject constructor(
             }
             val status = connection.responseCode
             val stream = if (status in 200..399) connection.inputStream else connection.errorStream
-            val body = stream?.use { it.readBytes().toString(Charsets.UTF_8) } ?: ""
-            HttpResult(status = status, body = body, latencyMillis = System.currentTimeMillis() - started)
+            val body = stream?.use { readAtMost(it, call.maxResponseBytes) } ?: ""
+            val headers = mutableMapOf<String, String>()
+            // Header names are case insensitive on the wire and lower cased here, so a caller can look
+            // one up without guessing how the server capitalised it.
+            connection.headerFields.forEach { (key, values) ->
+                if (key != null && values.isNotEmpty() && values.last() != null) {
+                    headers[key.lowercase()] = values.last()
+                }
+            }
+            HttpResult(
+                status = status,
+                body = body,
+                latencyMillis = System.currentTimeMillis() - started,
+                headers = headers,
+            )
         } catch (error: Exception) {
             HttpResult(
                 status = 0,
@@ -58,5 +71,21 @@ class UrlConnectionTransport @Inject constructor(
         } finally {
             runCatching { connection?.disconnect() }
         }
+    }
+
+    /** Reads a response, stopping at [limit] bytes instead of trusting the server's content length. */
+    private fun readAtMost(stream: java.io.InputStream, limit: Long): String {
+        if (limit < 0) return stream.readBytes().toString(Charsets.UTF_8)
+        val buffer = java.io.ByteArrayOutputStream(minOf(limit, 64 * 1024L).toInt())
+        val chunk = ByteArray(8 * 1024)
+        var total = 0L
+        while (total < limit) {
+            val wanted = minOf(chunk.size.toLong(), limit - total).toInt()
+            val read = stream.read(chunk, 0, wanted)
+            if (read <= 0) break
+            buffer.write(chunk, 0, read)
+            total += read
+        }
+        return buffer.toString(Charsets.UTF_8.name())
     }
 }

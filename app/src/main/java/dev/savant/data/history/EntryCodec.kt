@@ -1,6 +1,8 @@
 package dev.savant.data.history
 
+import dev.savant.domain.chat.PendingCall
 import dev.savant.domain.chat.ChatEntry
+import dev.savant.domain.chat.ConfirmEntry
 import dev.savant.domain.chat.ChatRole
 import dev.savant.domain.chat.DiffEntry
 import dev.savant.domain.chat.DiffStatus
@@ -51,6 +53,7 @@ object EntryKinds {
     const val DIFF = "diff"
     const val EXPORT = "export"
     const val NOTICE = "notice"
+    const val CONFIRM = "confirm"
 }
 
 /**
@@ -76,6 +79,7 @@ object EntryCodec {
         EntryKinds.FIELDS -> stored.payload.let { payload ->
             JsonPayload.readOrEmpty(payload).string("headline") ?: stored.body
         }
+        EntryKinds.CONFIRM -> stored.body.ifBlank { "a call needed your ok" }
         EntryKinds.NOTICE -> JsonPayload.readOrEmpty(stored.payload).string("title") ?: stored.body
         EntryKinds.DIFF -> stored.body.ifBlank { "diff" }
         else -> stored.body.ifBlank { stored.kind }
@@ -189,6 +193,28 @@ object EntryCodec {
                 false,
             )
 
+            is ConfirmEntry -> Quintet(
+                EntryKinds.CONFIRM,
+                null,
+                entry.calls.joinToString("\n") { "${it.summary} · ${it.target}" },
+                JsonPayload.write(
+                    obj(
+                        "calls" to arr(
+                            entry.calls.map { call ->
+                                obj(
+                                    "key" to str(call.key),
+                                    "tool" to str(call.tool),
+                                    "summary" to str(call.summary),
+                                    "target" to str(call.target),
+                                )
+                            },
+                        ),
+                        "resolved" to str(entry.resolved),
+                    ),
+                ),
+                false,
+            )
+
             is NoticeEntry -> Quintet(
                 EntryKinds.NOTICE,
                 null,
@@ -295,6 +321,23 @@ object EntryCodec {
                 shared = payload.bool("shared") ?: false,
                 savedTo = payload.string("savedTo"),
                 restored = true,
+                atMillis = row.createdAt,
+            )
+
+            // A restored card can never be approved: the turn it belonged to is long gone, so it is
+            // stored as decided and shown as history.
+            EntryKinds.CONFIRM -> ConfirmEntry(
+                id = row.id,
+                calls = payload.list("calls").mapNotNull { item ->
+                    val call = item as? Json.Obj ?: return@mapNotNull null
+                    PendingCall(
+                        key = call.string("key") ?: return@mapNotNull null,
+                        tool = call.string("tool") ?: "call",
+                        summary = call.string("summary") ?: "a call",
+                        target = call.string("target").orEmpty(),
+                    )
+                },
+                resolved = payload.string("resolved") ?: "from history",
                 atMillis = row.createdAt,
             )
 

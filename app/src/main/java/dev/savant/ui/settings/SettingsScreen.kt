@@ -35,8 +35,13 @@ import dev.savant.ai.ProviderKind
 import dev.savant.ai.ProviderProfile
 import dev.savant.ai.provider.NetworkEvent
 import dev.savant.ai.provider.NetworkPolicy
+import dev.savant.ai.provider.NetworkPolicy
 import dev.savant.ai.provider.ProfileSet
+import dev.savant.ai.web.SearchProvider
+import dev.savant.mcp.McpAuth
+import dev.savant.mcp.McpServer
 import dev.savant.data.settings.ThemeMode
+import dev.savant.data.storage.ageSince
 import dev.savant.domain.model.SaveFormat
 import dev.savant.domain.model.formatBytes
 import dev.savant.ui.components.AccentButton
@@ -189,6 +194,16 @@ fun SettingsScreen(
                         ProfileEditor(state = state, viewModel = viewModel)
                     }
                 }
+            }
+
+            item(key = "web") {
+                Section("web tools")
+                WebToolsSection(state = state, viewModel = viewModel)
+            }
+
+            item(key = "connectors") {
+                Section("connectors")
+                ConnectorsSection(state = state, viewModel = viewModel)
             }
 
             item(key = "privacy") {
@@ -721,3 +736,253 @@ private val TOKEN_LIMITS = listOf("256", "512", "1024", "2048", "4096")
 /** Chips are discrete and a stored number is not, so the nearest one is shown as selected. */
 private fun List<String>.closestTo(value: Float): String =
     minByOrNull { kotlin.math.abs((it.toFloatOrNull() ?: 0f) - value) } ?: first()
+
+/**
+ * `web_search` and `fetch_url`.
+ *
+ * Off by default, and the copy says what each switch actually changes: offering a tool to a model is
+ * not the same as letting it run, and letting it run is not the same as letting it run unasked.
+ */
+@Composable
+private fun WebToolsSection(state: SettingsUiState, viewModel: SettingsViewModel) {
+    val colors = Savant.colors
+    val settings = state.settings
+    SavantPanel(modifier = Modifier.panelPadding()) {
+        SwitchRow(
+            title = "web tools",
+            subtitle = "offer web_search and fetch_url to the model. off means neither is mentioned in the prompt",
+            checked = settings.webToolsEnabled,
+            onChange = viewModel::onWebTools,
+        )
+        Hairline()
+        SwitchRow(
+            title = "web search",
+            subtitle = "web_search calls a search api. fetch_url works without it",
+            checked = settings.searchApiEnabled,
+            onChange = viewModel::onSearchApi,
+            enabled = settings.webToolsEnabled,
+        )
+        Hairline()
+        ChoiceRow(
+            title = "search api",
+            options = SearchProvider.entries.map { it.label },
+            selected = state.searchProvider.label,
+            onSelect = { label ->
+                SearchProvider.entries.firstOrNull { it.label == label }?.let(viewModel::onSearchProvider)
+            },
+        )
+        if (state.searchProvider.needsKey) {
+            TextFieldRow(
+                label = "search api key",
+                value = state.searchKeyDraft,
+                placeholder = if (state.searchKeyIsSet) "stored — type to replace" else "key",
+                onValueChange = viewModel::onSearchKeyDraft,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Spacer(Modifier.weight(1f))
+                GhostButton(text = "save key", onClick = viewModel::onSaveSearchKey)
+            }
+        }
+        Hairline()
+        SwitchRow(
+            title = "confirm every web call",
+            subtitle = "a card in the chat shows the query or url before anything is sent. off means the model may search and fetch on its own",
+            checked = settings.confirmWebCalls,
+            onChange = viewModel::onConfirmWebCalls,
+            enabled = settings.webToolsEnabled,
+        )
+        Hairline()
+        TextFieldRow(
+            label = "allowlisted domains",
+            value = settings.allowListedDomains,
+            placeholder = "empty means ask every time",
+            onValueChange = viewModel::onAllowListChanged,
+        )
+        Text(
+            text = buildString {
+                if (state.allowList.isEmpty()) {
+                    append("no allowlist: fetch_url may ask for any https url, and asks first every time")
+                } else {
+                    append("fetch_url is limited to ${state.allowList.joinToString()} and their subdomains")
+                }
+                append(" · 500 kb · 15 s · results are handed to the model marked as untrusted")
+            },
+            style = SavantMono.path,
+            color = colors.textMuted,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+        )
+    }
+}
+
+/**
+ * Remote MCP connectors.
+ *
+ * Http and sse only: there is no stdio transport and savant never starts a program. A connector's
+ * tools are listed here and cached, so the model can be told what it may call without a round trip.
+ */
+@Composable
+private fun ConnectorsSection(state: SettingsUiState, viewModel: SettingsViewModel) {
+    val colors = Savant.colors
+    SavantPanel(modifier = Modifier.panelPadding()) {
+        if (state.connectors.isEmpty()) {
+            ValueRow(
+                title = "connectors",
+                value = "none",
+                subtitle = "remote mcp servers over http or sse. no stdio, no subprocess, nothing downloaded",
+                muted = true,
+            )
+        } else {
+            state.connectors.forEachIndexed { index, server ->
+                if (index > 0) Hairline()
+                ConnectorRow(
+                    server = server,
+                    tools = state.toolsFor(server.id),
+                    connecting = state.connectingId == server.id,
+                    onConnect = { viewModel.onConnect(server.id) },
+                    onEdit = { viewModel.onEditConnector(server) },
+                    onDelete = { viewModel.onDeleteConnector(server.id) },
+                    onToggle = { enabled -> viewModel.onToggleConnector(server.id, enabled) },
+                    onToggleConfirm = { confirm -> viewModel.onToggleConnectorConfirm(server.id, confirm) },
+                )
+            }
+        }
+
+        Hairline()
+        if (state.editingServer == null) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                GhostButton(text = "add connector", onClick = viewModel::onAddConnector)
+                Spacer(Modifier.weight(1f))
+            }
+        } else {
+            ConnectorEditor(state = state, viewModel = viewModel)
+        }
+
+        state.connectResult?.let { result ->
+            Text(
+                text = result,
+                style = SavantMono.path,
+                color = if (result.contains("did not connect")) colors.negative else colors.textMuted,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ConnectorRow(
+    server: McpServer,
+    tools: List<dev.savant.mcp.McpTool>,
+    connecting: Boolean,
+    onConnect: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onToggle: (Boolean) -> Unit,
+    onToggleConfirm: (Boolean) -> Unit,
+) {
+    val colors = Savant.colors
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                text = server.name,
+                style = SavantTypography.bodyMedium,
+                color = colors.text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Tag(text = server.auth.label, color = colors.textMuted)
+            if (server.confirmEveryCall) Tag(text = "confirms", color = colors.textMuted)
+            Tag(
+                text = if (server.enabled) "on" else "off",
+                color = if (server.enabled) colors.positive else colors.textFaint,
+                emphasis = server.enabled,
+            )
+        }
+        Text(
+            text = NetworkPolicy.redactUrl(server.url),
+            style = SavantMono.path,
+            color = colors.textMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = when {
+                tools.isEmpty() -> "no tools listed yet — connect to ask the server"
+                else -> "${tools.size} tool(s): " + tools.joinToString { it.name }
+            },
+            style = SavantMono.tag,
+            color = colors.textFaint,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+        )
+        server.serverVersion?.let {
+            Text(text = "server $it · last seen ${server.lastSeen?.let { at -> ageSince(at) } ?: "never"}", style = SavantMono.tag, color = colors.textFaint)
+        }
+        SwitchRow(
+            title = "confirm every call",
+            subtitle = null,
+            checked = server.confirmEveryCall,
+            onChange = onToggleConfirm,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GhostButton(text = if (connecting) "connecting" else "connect", onClick = onConnect, enabled = !connecting)
+            GhostButton(text = "edit", onClick = onEdit)
+            GhostButton(text = "delete", onClick = onDelete)
+            Spacer(Modifier.weight(1f))
+            GhostButton(text = if (server.enabled) "disable" else "enable", onClick = { onToggle(!server.enabled) })
+        }
+    }
+}
+
+@Composable
+private fun ConnectorEditor(state: SettingsUiState, viewModel: SettingsViewModel) {
+    val colors = Savant.colors
+    val server = state.editingServer ?: return
+    val verdict = NetworkPolicy.assess(server.url.trim().ifBlank { "https://" })
+    Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        SectionLabel(text = if (server.id.isBlank()) "new connector" else "edit connector")
+        TextFieldRow(label = "name", value = server.name, placeholder = "the wiki", onValueChange = viewModel::onServerName)
+        TextFieldRow(label = "url", value = server.url, placeholder = "https://mcp.example.com/mcp", onValueChange = viewModel::onServerUrl)
+        ChoiceRow(
+            title = "auth",
+            options = McpAuth.entries.map { it.label },
+            selected = server.auth.label,
+            onSelect = { label -> McpAuth.entries.firstOrNull { it.label == label }?.let(viewModel::onServerAuth) },
+        )
+        if (server.auth == McpAuth.HEADER) {
+            TextFieldRow(label = "header", value = server.authHeader, placeholder = "x-api-key", onValueChange = viewModel::onServerAuthHeader)
+        }
+        if (server.auth != McpAuth.NONE) {
+            TextFieldRow(
+                label = "key",
+                value = state.serverKeyDraft,
+                placeholder = if (state.serverKeyIsSet) "stored — type to replace" else "key",
+                onValueChange = viewModel::onServerKeyDraft,
+            )
+        }
+        Text(
+            text = when (verdict) {
+                NetworkPolicy.Verdict.Secure -> "https · the key travels in a header"
+                NetworkPolicy.Verdict.LocalCleartext -> (verdict as NetworkPolicy.Verdict.LocalCleartext).warning
+                is NetworkPolicy.Verdict.Refused -> verdict.reason
+            },
+            style = SavantMono.path,
+            color = when (verdict) {
+                is NetworkPolicy.Verdict.Refused -> colors.negative
+                NetworkPolicy.Verdict.LocalCleartext -> colors.caution
+                else -> colors.textMuted
+            },
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GhostButton(text = "cancel", onClick = viewModel::onCancelServer)
+            Spacer(Modifier.weight(1f))
+            AccentButton(text = "save", onClick = viewModel::onSaveConnector, enabled = server.url.isNotBlank() && verdict.allowed)
+        }
+    }
+}
