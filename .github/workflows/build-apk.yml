@@ -1,0 +1,88 @@
+name: build apk
+
+# Builds a debug APK on GitHub's runners (the dev sandbox has no Android SDK) and publishes it to
+# a rolling release, so there is always one URL to download and install:
+#   https://github.com/Stlucifer15t/savant/releases/download/savant-debug/app-debug.apk
+
+on:
+  push:
+    branches:
+      - "arena/0fa73532-savant"
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: set up jdk 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: make sure android sdk 35 is installed
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -d "$ANDROID_HOME/platforms/android-35" ]; then
+            yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+            "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
+          fi
+          if [ ! -d "$ANDROID_HOME/build-tools/35.0.0" ]; then
+            "$SDKMANAGER" "build-tools;35.0.0"
+          fi
+
+      - name: set up gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+
+      - name: unit tests
+        run: ./gradlew :app:testDebugUnitTest --stacktrace --no-daemon
+
+      - name: assemble debug apk
+        run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
+
+      - name: report apk
+        run: |
+          ls -la app/build/outputs/apk/debug/
+          sha256sum app/build/outputs/apk/debug/*.apk
+
+      - name: upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: savant-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: publish rolling release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/arena/0fa73532-savant'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK=$(ls app/build/outputs/apk/debug/*.apk | head -1)
+          NOTES="debug build of ${GITHUB_SHA::7} — $(date -u +%Y-%m-%dT%H:%MZ)
+
+          install: allow 'install unknown apps' for your browser or file manager, then open the apk.
+          savant edits offline single-player saves; do not point it at an online game.
+
+          built by .github/workflows/build-apk.yml"
+          gh release delete savant-debug --yes --cleanup-tag 2>/dev/null || true
+          gh release create savant-debug "$APK" \
+            --title "savant debug build" \
+            --notes "$NOTES" \
+            --target "$GITHUB_SHA" \
+            --latest
