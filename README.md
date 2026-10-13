@@ -21,7 +21,7 @@ byte.
 | 3 | edit flow, diff preview, rebuild + verify + export | **done** |
 | 4 | room database: history, sessions, search | **done** |
 | 5 | value finder across two saves, typed binary scanner | **done** |
-| 6 | ai providers, profiles, privacy controls | planned |
+| 6 | ai providers, profiles, privacy controls | **done** |
 | 7 | plugin runtime: import/export game definitions | planned |
 | 8 | mcp connectors, web search, fetch | planned |
 | 9 | lz-string / rpgsave, sqlite, ini, unity plist | planned |
@@ -43,7 +43,7 @@ git clone <this repo> savant
 cd savant
 ./gradlew :app:assembleDebug        # build
 ./gradlew :app:installDebug         # install on a device or emulator
-./gradlew :app:testDebugUnitTest    # 123 unit tests, pure jvm
+./gradlew :app:testDebugUnitTest    # 267 unit tests, pure jvm
 ```
 
 ### or just install the apk
@@ -112,8 +112,11 @@ backups → restore reopens it in one tap.
   to the chat. **compare saves** takes two saves of the same game and ranks every typed value that
   moved. **scan bytes** takes one file and a value you know is in it, and lists every offset that
   holds it. the byte modes need no parser, and a candidate can be named.
-- **settings** — appearance, editing behaviour, ai provider (inert until step 6), privacy, data,
-  about.
+- **settings** — appearance, editing behaviour, ai provider (engine, profiles, `send field values`),
+  privacy (the request log and where keys live), data, about. two pages hang off it: **ai providers**
+  (the profile list and the editor, with a masked key field and a one-tap connection test) and
+  **network activity** (every request savant made, in order, with its endpoint, size, whether values
+  went and which key — masked — was used).
 
 ---
 
@@ -124,13 +127,18 @@ app/src/main/java/dev/savant/
 ├── MainActivity.kt          one activity, edge to edge, share-intent handoff
 ├── MainViewModel.kt         theme + pending share uri
 ├── SavantApplication.kt     @HiltAndroidApp
-├── ai/                      assistant contract, tools, tool executor, local assistant
+├── ai/                      AssistantEngine + LlmClient contracts, tools, ToolExecutor,
+│                            LocalAssistant, AiPayload (privacy), NetworkLog, ProviderProfiles
+│   ├── net/                 HttpTransport, UrlConnectionTransport (gzip, sse, timeouts)
+│   └── providers/           ProviderProtocol + OpenAI/Claude/Gemini dialects, HttpLlmClient,
+│                            ProviderAssistant (the six-round tool loop)
 ├── codecs/                  CodecStrategy, ChecksumSpec, ByteRangeSpec
 ├── data/
 │   ├── db/                  room entities, daos, SavantDatabase (schema in app/schemas)
 │   ├── history/             ChatHistoryRepository, EntryCodec, NamedFieldRepository
 │   ├── session/             SessionStore — the one open save, shared by every screen
-│   ├── settings/            SavantSettings, SettingsRepository (DataStore), SecretStore
+│   ├── settings/            SavantSettings, SettingsRepository, ProviderProfileRepository,
+│   │                        SecretStore, SecretVault, KeystoreSecretStore
 │   └── storage/             SaveFileRepository (SAF), BackupStore + ImportIndex, room stores
 ├── di/                      Hilt modules + dispatcher qualifiers
 ├── domain/
@@ -150,9 +158,12 @@ app/src/main/java/dev/savant/
     ├── theme/               colour, type, shape, motion
     ├── icons/               SavantIcons (54 thin outline drawables)
     ├── components/          FileChip, ParseProgress, FieldGroupCard, DiffCard, ExportCard,
-    │                        CandidateRow, EmptyState, Messages, Primitives, TopBars, ValueTicker
+    │                        CandidateRow, EmptyState, Messages, Primitives, Rows, TopBars,
+    │                        ValueTicker
     ├── chat/                ChatScreen, ChatViewModel
-    ├── files/  formats/  settings/
+    ├── files/  formats/
+    ├── settings/            SettingsScreen/ViewModel, ProvidersScreen/ViewModel (profiles + keys),
+    │                        NetworkScreen/ViewModel (the request log)
     ├── finder/              FinderScreen, FinderViewModel, ScanPanel (compare + scan modes)
 ```
 
@@ -286,14 +297,57 @@ raw bytes or hex text, optionally truncated. `apply` recomputes and writes; `mat
 ## ai layer
 
 `AssistantEngine` is the provider-agnostic contract: `respond(AssistantInput)` returns either
-`Text`, `Proposal(edits, requestExport)` or `Failure`. two implementations are planned; one exists.
+`Text`, `Proposal(edits, requestExport)` or `Failure`. both implementations exist and the chat does
+not know which one it is talking to — that is the seam that makes a provider a settings change
+rather than a second code path.
 
-- `LocalAssistant` (today) — a deterministic command parser in front of the tool executor. no key,
-  no network, no model. it understands `set x to y`, `x = y`, `max all stats`, `zero flags`,
+- **`LocalAssistant`** — a deterministic command parser in front of the tool executor. no key, no
+  network, no model. it understands `set x to y`, `x = y`, `max all stats`, `zero flags`,
   `double gold`, `add 10 to strength`, `unlock tutorialdone`, `search hp`, `what is gold`,
   `explain v_0042`, `undo`, `export`, `list fields`.
-- a provider-backed engine (step 6) — same contract, same tools, `isRemote = true`, keys in
-  encrypted storage, request logging with keys redacted to their last four characters.
+- **`ProviderAssistant`** — `isRemote = true`. gives the model the same eight tools, streams the
+  answer into the chat as it arrives, executes tool calls through the same `ToolExecutor`, and
+  returns what came back as `Proposal(edits, …)`. capped at six tool rounds; a model that keeps
+  calling tools gets a sentence saying savant stopped, not an infinite loop.
+
+### providers
+
+`AssistantRouter` owns the choice: no active profile means `LocalAssistant`; an active one means a
+`HttpLlmClient` for that profile. A profile that cannot work — no model, no key, no base url for a
+custom endpoint — produces a `Failure` naming the fix before any request is sent.
+
+| kind | endpoint | dialect |
+| --- | --- | --- |
+| `claude` | `api.anthropic.com/v1` | messages api, `x-api-key`, `anthropic-version: 2023-06-01` |
+| `openai` | `api.openai.com/v1` | chat completions, `max_completion_tokens` on o/gpt-5+ models |
+| `openrouter` | `openrouter.ai/api/v1` | chat completions |
+| `gemini` | `generativelanguage.googleapis.com/v1beta` | `generateContent`, `x-goog-api-key` |
+| `custom` | whatever the user typed | chat completions — a local server, llama.cpp, a proxy |
+
+`ProviderProtocol` owns one dialect each: the endpoint, the headers, the request body, the parse,
+the stream event reader and the error copy (401/403 say the key was rejected, 404 says no such model
+or endpoint, 429 says rate limited, 5xx says the provider is having trouble, and only 408/429/5xx are
+retried). `HttpLlmClient` owns one profile: `complete`, `events` (streaming, with the same finished
+`LlmResponse` as a non-streaming call) and `ping`. `ProviderAssistant` owns the conversation.
+
+### privacy
+
+the rules are enforced in code, not in copy:
+
+- **the file never goes anywhere.** `AiPayload.summaryFor` builds the field listing the model sees.
+  over 200 kb it is trimmed to names and types, values in the listing are dropped, and any single
+  string value over 256 characters is withheld — `AiPayload` has no method that accepts a
+  `ByteArray`.
+- **`send field values` off** sends paths and types only, for saves with names in them.
+- **keys** live in `SecretStore` — an aes-gcm vault in `files/secrets.vault` under a key held by the
+  android keystore — and every surface, including the request log, shows only
+  `AiPayload.redactKey`'s `****abcd`. a device whose keystore refuses to work falls back to
+  `MemorySecretStore`, and settings says `memory only` rather than claiming encryption.
+- **the request log** is opt-in (`log network requests`), memory only, capped at the last 60
+  requests, and contains endpoint, status, byte count, whether values were included and the masked
+  key. `AiPayload.redactText` runs over every detail line before it is stored.
+- the first answer from a provider says so once: *"a field listing goes to <host>, the save file
+  itself never leaves the device"*.
 
 the eight tools, in `ai/Tools.kt`:
 
@@ -398,7 +452,7 @@ mapping — so the work done here is not thrown away when the format gets a real
 ./gradlew :app:testDebugUnitTest
 ```
 
-179 tests, pure jvm, no robolectric and no android APIs:
+267 tests, pure jvm, no robolectric and no android APIs:
 
 - `domain/model/FieldModelTest` — paths, quoting, value parsing and formatting, types, categories,
   validation, quick values, tree search and normalisation.
@@ -426,6 +480,32 @@ mapping — so the work done here is not thrown away when the format gets a real
 - `domain/finder/BinaryValuesTest` — typed reads in both byte orders, sign extension for narrow
   integers, float and double windows, windows that do not fit, offset and hex formatting, and the
   two shape tests ranking depends on: printable text, and no zero bytes.
+- `ai/ProviderProfilesTest` — profile json round trips, tolerant reads (a profile written by an
+  older build, an entry without an id, a corrupt document meaning *no* profiles rather than a crash),
+  default models per provider, labels and the incomplete-profile messages.
+- `ai/net/HttpTransportTest` — a real loopback `ServerSocket` under the transport: POST method and
+  headers, body encoding, a non-2xx status becoming a response rather than an exception, gzip
+  decompression, sse `data:` framing (multi-line events joined, comments skipped), and a dead
+  endpoint surfacing as a `TransportException`.
+- `ai/providers/OpenAiProtocolTest`, `ClaudeProtocolTest`, `GeminiProtocolTest` — one dialect each,
+  request shape and stream parsing: tool call deltas keyed by index, `[DONE]`, usage from
+  `stream_options`; claude's top-level system prompt, `input_schema` and merged `tool_result` turns;
+  gemini's `functionDeclarations` in uppercase, `systemInstruction` and `x-goog-api-key` header.
+  each one asserts that a streamed answer finishes as the same `LlmResponse` a non-streaming call
+  would have produced.
+- `ai/providers/HttpLlmClientTest` — one profile over a scripted transport: the key in the header,
+  the request log line with a masked key and no key material, nothing logged while logging is off,
+  the settings-shaped failure for a missing key, and ping sending no save content.
+- `ai/providers/ProviderAssistantTest` — the tool loop against a scripted client: read tools run, a
+  `set_field` becomes a proposed `FieldEdit` and never a write, a read-only session is refused
+  before the first request, a transport failure in a later round keeps the proposals already made,
+  the six-round cap, history trimming and the one-time privacy line.
+- `ai/AssistantRouterTest` — the decision table: no profile → on-device parser, inactive profile →
+  on-device parser, incomplete profile and missing key → failures naming the fix, active profile →
+  the provider engine with `isRemote = true`, and one engine per profile.
+- `data/settings/SecretVaultTest` — the envelope around the encrypted file with a fake cipher: magic
+  and version bytes, a truncated body, a version from the future, a decrypt that throws, and json
+  that is not a map — each returning nothing instead of destroying the keys.
 - `domain/finder/SaveDiffTest` — the finder over two small sample saves shaped like a real one:
   magic header, i32 gold, f32 hp, i16 lives, an ascii name, a big endian play time and a crc32
   trailer that moves whenever anything else does. changed runs, ranking (the gold counter has to beat
@@ -493,9 +573,12 @@ reasonable choices made without asking, so they are written down:
 5. **room is deferred to step 4.** backups and the recent-imports list are file backed
    (`files/backups/<id>/{save.bin,meta.txt}` and `files/imports.txt`) so step 3 has restore without
    a schema. the on-disk layout is deliberately boring so it can be lifted into tables unchanged.
-6. **api keys live in memory only for now.** `SecretStore` is a process-scoped map; step 6 replaces
-   it with `EncryptedSharedPreferences`. nothing is written to disk, and every surface shows a
-   masked value.
+6. **api keys are one aes-gcm file under a keystore key, not `EncryptedSharedPreferences`.** that
+   library is deprecated and its failure mode on a device with a broken keystore is a crash. this is
+   a smaller surface — one file, one alias — with a defined fallback: `KeystoreSecretStore` degrades
+   to `MemorySecretStore`, settings says `memory only`, and keys are re-entered instead of the app
+   coming down. the *format* (`SecretVault`: magic, version byte, ciphertext) is pure kotlin with the
+   cipher passed in, so the part that could silently destroy every key at once is unit tested.
 7. **icons are feather-derived vector drawables** rather than `material-icons-extended` (a 7 000-icon
    dependency for ~50 glyphs) or lucide (not fetchable in this environment, same design lineage).
 8. **fonts are bundled ttfs** rather than downloadable fonts: savant has to look identical offline
@@ -513,7 +596,7 @@ reasonable choices made without asking, so they are written down:
     to be on google maven and maven central.
 13. **the app is built in ci, not in the dev sandbox.** the sandbox has no android sdk and no
     access to google maven, so while it was written the jvm half (domain, parsers, codecs, ai and
-    their 123 tests) was compiled and run with kotlinc and a stub junit runner, and the android
+    their 267 tests) was compiled and run with kotlinc and a stub junit runner, and the android
     half was written against stable, non-experimental material 3 apis. `.github/workflows/build-apk.yml`
     is now the compiler of record: it builds the apk, publishes it, then runs the tests. the first
     real build caught four things the sandbox could not — a nullable `Uri` passed to
@@ -542,6 +625,19 @@ reasonable choices made without asking, so they are written down:
 19. **float readings are judged on both sides of the change.** four bytes of a small integer read as
     a little endian float32 come out as a denormal (120 is 1.6e-43), and no game stores one on
     purpose. without that rule a float misreading of the gold counter outranked the gold counter.
+20. **a provider profile is settings; a key is not.** the endpoint, the model, the temperature and
+    the streaming switch live in `savant-providers` as json so a new field in a later version needs
+    no migration; the key lives in the vault under `provider.<profileId>.apiKey`. that is why a
+    profile can be renamed, retargeted at another model or deleted without ever touching a secret,
+    and why the settings row can show `no key stored` next to a fully configured profile.
+21. **the provider is given the same eight tools, not a file api.** the obvious alternative — let
+    the model emit a patch — cannot be validated and cannot be undone. a `set_field` call comes back
+    as a proposed `FieldEdit` that goes through the diff preview, `EditValidator` and the export
+    verifier exactly like a tap, so "the model can never write a byte" is a property of the code
+    rather than a promise in a system prompt.
+22. **the request log is opt-in, in memory, and never the payload.** a log that survives a restart
+    is a record of what someone was doing with their saves, so it is capped at 60 in-memory records
+    and off by default; what it stores is metadata plus a redacted detail line, never a request body.
 
 ---
 
@@ -564,7 +660,15 @@ reasonable choices made without asking, so they are written down:
   field values are not stored.
 - a restored transcript is read only. its export card keeps the verification verdict but not the
   bytes, so share and save are off until an edit rebuilds the file.
-- api keys are still in memory only; encrypted storage arrives with the provider work in step 6.
+- api keys live in one vault file behind the android keystore. a device whose keystore is unusable
+  (or a key invalidated by removing every screen lock) falls back to memory for that session, and
+  settings says `memory only` — the keys are then re-entered each launch, and nothing is silently
+  downgraded without saying so.
+- a provider is asked at most six tool rounds deep before savant stops it, and a provider answer is
+  still only a proposal: nothing a model says can be applied without the diff, the validator and the
+  verifier.
+- the request log keeps the last 60 requests in memory and only while the switch is on; it is a
+  window on what just happened, not an audit trail.
 - `Android/data` is unreachable on android 11+ without extra privileges; share the file in instead.
   an optional shizuku path is a later decision, not a plan.
 
