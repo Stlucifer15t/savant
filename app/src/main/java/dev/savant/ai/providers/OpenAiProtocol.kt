@@ -92,6 +92,11 @@ object OpenAiProtocol : ProviderProtocol {
 
     override fun streamReader(profile: ProviderProfile): StreamReader = Reader(profile.model)
 
+    override fun modelsEndpoint(profile: ProviderProfile): String =
+        ProviderProtocol.join(profile.baseUrl.ifBlank { profile.provider.defaultBaseUrl }, "models")
+
+    override fun parseModels(body: String): List<String> = ProviderProtocol.idsFromDataArray(body)
+
     // ---- request shape ---------------------------------------------------------------
 
     private fun messageJson(message: LlmMessage): Json = when (message.role) {

@@ -116,6 +116,34 @@ data class ProviderPing(
     val endpoint: String? = null,
 )
 
+/**
+ * Result of "read models": the ids an endpoint will accept, or why it would not say.
+ *
+ * [models] is empty when [ok] is false, and the screen shows [detail] instead — a 401 here means
+ * the same as a 401 in the chat, and the copy comes from the same place.
+ */
+data class ProviderModels(
+    val ok: Boolean,
+    val models: List<String>,
+    val detail: String,
+    val endpoint: String? = null,
+    val latencyMillis: Long = 0L,
+) {
+    val count: Int get() = models.size
+
+    val summary: String
+        get() = when {
+            !ok -> "could not read the list · $detail"
+            models.isEmpty() -> "the endpoint listed no models"
+            else -> "$count model(s) · $detail"
+        }
+
+    companion object {
+        fun failed(detail: String, endpoint: String? = null, latencyMillis: Long = 0L) =
+            ProviderModels(false, emptyList(), detail, endpoint, latencyMillis)
+    }
+}
+
 /** What a provider is configured with. Keys live in EncryptedSharedPreferences, never here. */
 data class ProviderProfile(
     val id: String,

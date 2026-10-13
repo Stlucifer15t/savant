@@ -9,6 +9,7 @@ import dev.savant.ai.ToolCall
 import dev.savant.ai.ToolCatalog
 import dev.savant.ai.net.TransportException
 import dev.savant.parsers.json.JsonPayload
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -25,6 +26,18 @@ import org.junit.Test
 class ClaudeProtocolTest {
 
     private val protocol = ClaudeProtocol
+
+    @Test
+    fun listingModelsUsesTheSameBaseUrlAndHeadersAsTheChat() {
+        assertEquals("https://api.anthropic.com/v1/models", protocol.modelsEndpoint(profile()))
+        val headers = protocol.headers(profile(), "sk-ant-1234")
+        assertEquals("sk-ant-1234", headers["x-api-key"])
+        assertEquals("2023-06-01", headers["anthropic-version"])
+
+        val models = protocol.parseModels("""{"data":[{"id":"claude-sonnet-4-5"},{"id":"claude-haiku-4-5"}]}""")
+        assertEquals(listOf("claude-haiku-4-5", "claude-sonnet-4-5"), models)
+        assertNotNull(protocol.modelsEndpoint(profile().copy(baseUrl = "https://proxy.local/v1/")))
+    }
 
     private fun profile() = ProviderProfile(
         id = "p1",

@@ -127,6 +127,11 @@ object ClaudeProtocol : ProviderProtocol {
         return ProviderProtocol.describe(status, detail)
     }
 
+    override fun modelsEndpoint(profile: ProviderProfile): String =
+        ProviderProtocol.join(profile.baseUrl.ifBlank { profile.provider.defaultBaseUrl }, "models")
+
+    override fun parseModels(body: String): List<String> = ProviderProtocol.idsFromDataArray(body)
+
     override fun streamReader(profile: ProviderProfile): StreamReader = Reader(profile.model)
 
     // ---- shared shapes ---------------------------------------------------------------

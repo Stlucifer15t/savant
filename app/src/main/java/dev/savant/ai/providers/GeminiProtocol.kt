@@ -122,6 +122,29 @@ object GeminiProtocol : ProviderProtocol {
         return ProviderProtocol.describe(status, detail)
     }
 
+    override fun modelsEndpoint(profile: ProviderProfile): String =
+        ProviderProtocol.join(profile.baseUrl.ifBlank { profile.provider.defaultBaseUrl }, "models")
+
+    /**
+     * Google names a model `models/gemini-1.5-pro` and says which methods it supports. Only the
+     * ones that can generate content are offered — an embeddings-only model would 404 the chat.
+     */
+    override fun parseModels(body: String): List<String> {
+        val root = ProviderProtocol.tree(body)
+        if (root.obj("error") != null) return emptyList()
+        return root.list("models")
+            .mapNotNull { entry -> entry as? Json.Obj }
+            .filter { entry ->
+                val methods = entry.strings("supportedGenerationMethods")
+                methods.isEmpty() || methods.any { it.equals("generateContent", ignoreCase = true) }
+            }
+            .mapNotNull { entry -> entry.string("name") }
+            .map { name -> name.removePrefix("models/").trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .sorted()
+    }
+
     override fun streamReader(profile: ProviderProfile): StreamReader = Reader(profile.model)
 
     // ---- shared shapes ---------------------------------------------------------------

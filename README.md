@@ -112,11 +112,18 @@ backups → restore reopens it in one tap.
   to the chat. **compare saves** takes two saves of the same game and ranks every typed value that
   moved. **scan bytes** takes one file and a value you know is in it, and lists every offset that
   holds it. the byte modes need no parser, and a candidate can be named.
-- **settings** — appearance, editing behaviour, ai provider (engine, profiles, `send field values`),
-  privacy (the request log and where keys live), data, about. two pages hang off it: **ai providers**
-  (the profile list and the editor, with a masked key field and a one-tap connection test) and
-  **network activity** (every request savant made, in order, with its endpoint, size, whether values
-  went and which key — masked — was used).
+- **settings** — a table of contents, not a form. each row names one subject, shows its current
+  value, and opens a page: **ai provider** (the engine list, the profile editor, `send field values`),
+  **privacy & logs** (what may leave the device, where keys live, the request log), **appearance**
+  (theme, motion, monospace values), **editing** (the diff gate, the parse log, keeping originals),
+  **storage** (backups, imports, history, clearing) and **about**. one more page hangs off privacy:
+  **network activity** — every request savant made, in order, with its endpoint, size, whether values
+  went and which key — masked — was used.
+- **ai provider** — three panels: what is answering now (on-device or a named profile),
+  one row per provider kind to add, and the editor for the profile being changed. the editor holds a
+  **connection panel**: `test connection` asks the endpoint a one-word question, `read models` lists
+  what the account may ask for, and a test that succeeds reads the list too, so one tap usually
+  fills both. a long list filters as you type and picking a name only changes the draft.
 
 ---
 
@@ -325,10 +332,20 @@ custom endpoint — produces a `Failure` naming the fix before any request is se
 | `custom` | whatever the user typed | chat completions — a local server, llama.cpp, a proxy |
 
 `ProviderProtocol` owns one dialect each: the endpoint, the headers, the request body, the parse,
-the stream event reader and the error copy (401/403 say the key was rejected, 404 says no such model
-or endpoint, 429 says rate limited, 5xx says the provider is having trouble, and only 408/429/5xx are
-retried). `HttpLlmClient` owns one profile: `complete`, `events` (streaming, with the same finished
-`LlmResponse` as a non-streaming call) and `ping`. `ProviderAssistant` owns the conversation.
+the stream event reader, the `/models` listing and the error copy (401/403 say the key was rejected,
+404 says no such model or endpoint, 429 says rate limited, 5xx says the provider is having trouble,
+and only 408/429/5xx are retried). `HttpLlmClient` owns one profile: `complete`, `events` (streaming,
+with the same finished `LlmResponse` as a non-streaming call), `ping` and `models`. `ProviderAssistant`
+owns the conversation.
+
+**reading the model list.** every dialect has a `modelsEndpoint` — `GET {base}/models` for the
+openai shape and for anthropic, `GET .../v1beta/models` for google — and `parseModels` reads it: the
+`data[].id` array for two of them, `models[].name` for google, with the `models/` prefix stripped and
+non-generative models (`embedContent` only) left out. a `GET` with no body, so reading a list can
+never be the moment a conversation or a file leaves the device, and never costs a completion. the
+picker is what the endpoint reports, not a built-in table that rots: 60 models on openrouter, four
+on a local server, and the screen shows exactly that. a rejected key comes back redacted to
+`****1234` here too — a provider likes to quote the key it refused.
 
 ### privacy
 
@@ -452,7 +469,7 @@ mapping — so the work done here is not thrown away when the format gets a real
 ./gradlew :app:testDebugUnitTest
 ```
 
-267 tests, pure jvm, no robolectric and no android APIs:
+276 tests, pure jvm, no robolectric and no android APIs:
 
 - `domain/model/FieldModelTest` — paths, quoting, value parsing and formatting, types, categories,
   validation, quick values, tree search and normalisation.
@@ -488,14 +505,19 @@ mapping — so the work done here is not thrown away when the format gets a real
   decompression, sse `data:` framing (multi-line events joined, comments skipped), and a dead
   endpoint surfacing as a `TransportException`.
 - `ai/providers/OpenAiProtocolTest`, `ClaudeProtocolTest`, `GeminiProtocolTest` — one dialect each,
-  request shape and stream parsing: tool call deltas keyed by index, `[DONE]`, usage from
-  `stream_options`; claude's top-level system prompt, `input_schema` and merged `tool_result` turns;
-  gemini's `functionDeclarations` in uppercase, `systemInstruction` and `x-goog-api-key` header.
-  each one asserts that a streamed answer finishes as the same `LlmResponse` a non-streaming call
-  would have produced.
+  request shape, stream parsing and the model listing: tool call deltas keyed by index, `[DONE]`,
+  usage from `stream_options`; claude's top-level system prompt, `input_schema` and merged
+  `tool_result` turns; gemini's `functionDeclarations` in uppercase, `systemInstruction` and
+  `x-goog-api-key` header. each one asserts that a streamed answer finishes as the same `LlmResponse`
+  a non-streaming call would have produced, and that `/models` points at the dialect's own base url
+  and reads only that dialect's listing shape — sorted, de-duplicated, `models/` prefix stripped,
+  embedding-only models left out.
 - `ai/providers/HttpLlmClientTest` — one profile over a scripted transport: the key in the header,
   the request log line with a masked key and no key material, nothing logged while logging is off,
-  the settings-shaped failure for a missing key, and ping sending no save content.
+  the settings-shaped failure for a missing key, ping sending no save content, and reading the model
+  list as a `GET` whose body is empty — no conversation, no file names, a self hosted endpoint
+  needing no key, a rejected key reported without echoing it, and an empty listing staying a
+  success.
 - `ai/providers/ProviderAssistantTest` — the tool loop against a scripted client: read tools run, a
   `set_field` becomes a proposed `FieldEdit` and never a write, a read-only session is refused
   before the first request, a transport failure in a later round keeps the proposals already made,
@@ -643,7 +665,15 @@ reasonable choices made without asking, so they are written down:
     llama.cpp or a proxy speaks the same dialect and wants no authorization header, so a key is
     required only when the request would go to the provider's own base url. a custom endpoint is
     never nagged for one — if it does want a key, its own 401 says so, in its own words.
-23. **the request log is opt-in, in memory, and never the payload.** a log that survives a restart
+23. **a model name is read from the endpoint, never guessed.** the provider screen lists what the
+    account may actually ask for, and only falls back to typing a name when the endpoint will not
+    say. the alternative — a table of model names in the app — is wrong within a month, and wrong
+    about which models *this* key can reach.
+24. **the settings root shows state; the pages hold switches.** every row on the settings root
+    answers "what is set?" — the engine, whether the log is on, where keys live, how many backups
+    exist — and opening it is a choice rather than a scroll. a screen whose first five rows are
+    switches the user did not come for is a screen they will scroll past the thing they wanted.
+25. **the request log is opt-in, in memory, and never the payload.** a log that survives a restart
     is a record of what someone was doing with their saves, so it is capped at 60 in-memory records
     and off by default; what it stores is metadata plus a redacted detail line, never a request body.
 

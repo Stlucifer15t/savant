@@ -35,9 +35,14 @@ import dev.savant.ui.finder.FinderScreen
 import dev.savant.ui.formats.FormatsScreen
 import dev.savant.ui.icons.SavantIcon
 import dev.savant.ui.icons.SavantIcons
+import dev.savant.ui.settings.AboutSettingsScreen
+import dev.savant.ui.settings.AppearanceSettingsScreen
+import dev.savant.ui.settings.EditingSettingsScreen
 import dev.savant.ui.settings.NetworkScreen
+import dev.savant.ui.settings.PrivacySettingsScreen
 import dev.savant.ui.settings.ProvidersScreen
 import dev.savant.ui.settings.SettingsScreen
+import dev.savant.ui.settings.StorageSettingsScreen
 import dev.savant.ui.theme.Savant
 import dev.savant.ui.theme.SavantMono
 
@@ -63,10 +68,16 @@ enum class SavantTab(
 object SavantRoutes {
     const val PROVIDERS = "settings/providers"
     const val NETWORK = "settings/network"
+    const val APPEARANCE = "settings/appearance"
+    const val EDITING = "settings/editing"
+    const val PRIVACY = "settings/privacy"
+    const val STORAGE = "settings/storage"
+    const val ABOUT = "settings/about"
 
     /** The tab that owns a route, so the bar stays lit on a pushed page. */
-    fun tabOf(route: String?): SavantTab? = when (route) {
-        PROVIDERS, NETWORK -> SavantTab.SETTINGS
+    fun tabOf(route: String?): SavantTab? = when {
+        route == null -> null
+        route.startsWith("settings") -> SavantTab.SETTINGS
         else -> SavantTab.entries.firstOrNull { it.route == route }
     }
 }
@@ -117,7 +128,11 @@ fun SavantApp(
             composable(SavantTab.SETTINGS.route) {
                 SettingsScreen(
                     onOpenProviders = { navController.navigate(SavantRoutes.PROVIDERS) },
-                    onOpenNetwork = { navController.navigate(SavantRoutes.NETWORK) },
+                    onOpenPrivacy = { navController.navigate(SavantRoutes.PRIVACY) },
+                    onOpenAppearance = { navController.navigate(SavantRoutes.APPEARANCE) },
+                    onOpenEditing = { navController.navigate(SavantRoutes.EDITING) },
+                    onOpenStorage = { navController.navigate(SavantRoutes.STORAGE) },
+                    onOpenAbout = { navController.navigate(SavantRoutes.ABOUT) },
                 )
             }
             composable(SavantRoutes.PROVIDERS) {
@@ -125,6 +140,25 @@ fun SavantApp(
             }
             composable(SavantRoutes.NETWORK) {
                 NetworkScreen(onBack = { navController.popBackStack() })
+            }
+            composable(SavantRoutes.APPEARANCE) {
+                AppearanceSettingsScreen(onBack = { navController.popBackStack() })
+            }
+            composable(SavantRoutes.EDITING) {
+                EditingSettingsScreen(onBack = { navController.popBackStack() })
+            }
+            composable(SavantRoutes.PRIVACY) {
+                PrivacySettingsScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenNetwork = { navController.navigate(SavantRoutes.NETWORK) },
+                    onOpenProviders = { navController.navigate(SavantRoutes.PROVIDERS) },
+                )
+            }
+            composable(SavantRoutes.STORAGE) {
+                StorageSettingsScreen(onBack = { navController.popBackStack() })
+            }
+            composable(SavantRoutes.ABOUT) {
+                AboutSettingsScreen(onBack = { navController.popBackStack() })
             }
         }
         BottomTabBar(

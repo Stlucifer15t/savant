@@ -51,6 +51,20 @@ interface ProviderProtocol {
     /** Fresh accumulator for one streaming exchange. */
     fun streamReader(profile: ProviderProfile): StreamReader
 
+    /**
+     * Where this dialect lists the models an account may use. Savant reads it so a model name is
+     * picked from what the endpoint actually offers instead of being typed from memory.
+     *
+     * A `GET`, never a `POST`: listing models must not be able to cost a completion.
+     */
+    fun modelsEndpoint(profile: ProviderProfile): String
+
+    /**
+     * The model ids in a `/models` answer, in the order the answer gave them.
+     * Returns an empty list for a payload that is not this dialect's listing shape.
+     */
+    fun parseModels(body: String): List<String>
+
     companion object {
 
         fun of(kind: ProviderKind): ProviderProtocol = when (kind) {
@@ -92,6 +106,21 @@ interface ProviderProtocol {
 
         /** json payload -> typed tree, with the dialect's own reader and the same lenient parser. */
         fun tree(text: String): Json = JsonPayload.readOrEmpty(text)
+
+        /**
+         * The `data[].id` shape shared by the openai and anthropic listings, sorted and de-duplicated
+         * so the picker is stable between two reads of the same endpoint.
+         */
+        fun idsFromDataArray(body: String): List<String> {
+            val root = tree(body)
+            if (root.obj("error") != null) return emptyList()
+            return root.list("data")
+                .mapNotNull { entry -> (entry as? Json.Obj)?.string("id") }
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .distinct()
+                .sorted()
+        }
     }
 }
 

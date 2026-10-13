@@ -15,6 +15,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -194,6 +195,70 @@ class HttpLlmClientTest {
         assertFalse(body.contains("editable values"))
         assertFalse(body.contains("player"))
         assertTrue(JsonPayload.read(body).long("max_tokens")!! <= 32)
+    }
+
+    // ---- reading the model list -----------------------------------------------------
+
+    @Test
+    fun readingModelsIsAGetThatCarriesNoConversationAndNoFile() {
+        transport.willAnswer(
+            body = """{"data":[{"id":"gpt-4o-mini"},{"id":"gpt-4o"},{"id":"gpt-4o"}]}""",
+        )
+        val models = runBlocking { client().models() }
+
+        assertTrue(models.ok)
+        assertEquals(listOf("gpt-4o", "gpt-4o-mini"), models.models)
+        assertEquals("api.openai.com/v1/models", models.endpoint)
+
+        val sent = transport.last
+        assertEquals("GET", sent.method)
+        assertEquals("https://api.openai.com/v1/models", sent.url)
+        assertEquals("Bearer sk-test-abcd1234", sent.headers["Authorization"])
+        assertFalse(sent.body?.contains("player") ?: false)
+        assertFalse(sent.body?.contains("max the gold") ?: false)
+    }
+
+    @Test
+    fun readingModelsFromASelfHostedEndpointNeedsNoKey() {
+        val profile = profile(kind = ProviderKind.CUSTOM, baseUrl = "http://192.168.1.9:11434/v1", model = "llama3")
+        transport.willAnswer(body = """{"data":[{"id":"llama3"},{"id":"qwen2.5"}]}""")
+        val models = runBlocking { client(profile = profile, key = null).models() }
+
+        assertTrue(models.ok)
+        assertEquals(listOf("llama3", "qwen2.5"), models.models)
+        assertEquals("http://192.168.1.9:11434/v1/models", transport.last.url)
+        assertNull(transport.last.headers["Authorization"])
+    }
+
+    @Test
+    fun aHostedProviderWithoutAKeySaysSoInsteadOfCalling() {
+        val models = runBlocking { client(key = null).models() }
+        assertFalse(models.ok)
+        assertTrue(models.detail.contains("no api key stored"))
+        assertTrue(transport.sent.isEmpty())
+    }
+
+    @Test
+    fun aRejectedModelListingIsReportedAndLoggedWithoutTheKey() {
+        transport.willAnswer(status = 401, body = """{"error":{"message":"bad key sk-test-abcd1234"}}""")
+        val models = runBlocking { client().models() }
+
+        assertFalse(models.ok)
+        assertTrue(models.detail.contains("the key was rejected"))
+        assertFalse(models.detail.contains("sk-test-abcd1234"))
+        val record = log.records.value.first()
+        assertEquals("failed", record.summary.substringBefore(" ·"))
+        assertTrue(record.endpoint.endsWith("(models)"))
+        assertEquals("****1234", record.keyMask)
+    }
+
+    @Test
+    fun anEmptyListingIsSuccessWithNothingToPick() {
+        transport.willAnswer(body = """{"data":[]}""")
+        val models = runBlocking { client().models() }
+        assertTrue(models.ok)
+        assertTrue(models.models.isEmpty())
+        assertTrue(models.summary.contains("no models"))
     }
 
     @Test

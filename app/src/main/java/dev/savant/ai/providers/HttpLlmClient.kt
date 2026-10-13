@@ -9,6 +9,7 @@ import dev.savant.ai.LlmResponse
 import dev.savant.ai.NetworkLog
 import dev.savant.ai.NetworkRecord
 import dev.savant.ai.ProviderKind
+import dev.savant.ai.ProviderModels
 import dev.savant.ai.ProviderPing
 import dev.savant.ai.ProviderProfile
 import dev.savant.ai.ProviderProfiles
@@ -147,6 +148,74 @@ class HttpLlmClient(
     }
 
     /**
+     * Reads the model ids this endpoint offers.
+     *
+     * A `GET` with no body: nothing about the open file, the conversation or the user goes out —
+     * reading a list must never be the moment data leaves the device. What it does send is the key,
+     * and what it gets back is cached by the caller, never written to disk.
+     */
+    suspend fun models(): ProviderModels {
+        val url = protocol.modelsEndpoint(profile)
+        val started = System.currentTimeMillis()
+        val endpoint = ProviderProtocol.endpointLabel(url)
+        val key = apiKey()?.trim()?.takeIf { it.isNotEmpty() }
+        if (key == null && ProviderProfiles.needsKey(profile)) {
+            return ProviderModels.failed("no api key stored for ${profile.name} — add one first", endpoint)
+        }
+        return try {
+            val response = transport.send(
+                HttpRequest(
+                    url = url,
+                    method = "GET",
+                    headers = protocol.headers(profile, key),
+                    body = null,
+                    timeoutMillis = MODELS_TIMEOUT_MILLIS,
+                ),
+            )
+            val latency = System.currentTimeMillis() - started
+            if (!response.ok) {
+                // A provider likes to quote the key it rejected back at you. It goes no further
+                // than the last four characters, exactly as it would from the chat.
+                val message = AiPayload.redactText(protocol.error(response.status, response.body).message)
+                recordListing(endpoint, response.status, latency, message)
+                return ProviderModels.failed(message, endpoint, latency)
+            }
+            val models = runCatching { protocol.parseModels(response.body) }.getOrElse { emptyList() }
+            recordListing(endpoint, response.status, latency, detail = null)
+            ProviderModels(
+                ok = true,
+                models = models,
+                detail = if (models.isEmpty()) "the answer held no model ids" else "read from ${profile.provider.label}",
+                endpoint = endpoint,
+                latencyMillis = latency,
+            )
+        } catch (failure: TransportException) {
+            val latency = System.currentTimeMillis() - started
+            val detail = AiPayload.redactText(failure.message ?: "the request failed")
+            recordListing(endpoint, failure.status, latency, detail)
+            ProviderModels.failed(detail, endpoint, latency)
+        }
+    }
+
+    /** The model list is a listing, not a completion: a hung endpoint should not hang the screen. */
+    private fun recordListing(endpoint: String, status: Int?, latencyMillis: Long, detail: String?) {
+        log.record(
+            NetworkRecord(
+                atMillis = System.currentTimeMillis() - latencyMillis,
+                provider = profile.provider.label,
+                endpoint = "$endpoint (models)",
+                status = status,
+                bytesSent = 0,
+                fieldsSent = 0,
+                valuesSent = false,
+                streaming = false,
+                keyMask = AiPayload.redactKey(apiKey()),
+                detail = detail?.let { AiPayload.redactText(it) },
+            ),
+        )
+    }
+
+    /**
      * A self hosted endpoint (ollama, llama.cpp, a proxy) needs no key; every hosted provider does,
      * and saying so before the request is better than a 401 the user has to interpret.
      */
@@ -189,6 +258,9 @@ class HttpLlmClient(
     }
 
     companion object {
+        /** Reading a list is a quick call; a completion gets [HttpTransport.DEFAULT_TIMEOUT_MILLIS]. */
+        const val MODELS_TIMEOUT_MILLIS = 30_000
+
         fun displayLabel(profile: ProviderProfile): String =
             if (profile.model.isBlank()) profile.provider.label else "${profile.provider.label} · ${profile.model}"
     }

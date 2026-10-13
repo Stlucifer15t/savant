@@ -41,6 +41,22 @@ class GeminiProtocolTest {
     private fun part(obj: Json): Json.Obj = obj as Json.Obj
 
     @Test
+    fun theModelListDropsTheModelsPrefixAndKeepsOnlyGenerativeOnes() {
+        val models = protocol.parseModels(
+            """
+            {"models":[
+              {"name":"models/gemini-2.0-flash","supportedGenerationMethods":["generateContent","countTokens"]},
+              {"name":"models/gemini-2.0-pro"},
+              {"name":"models/text-embedding-004","supportedGenerationMethods":["embedContent"]}
+            ]}
+            """.trimIndent(),
+        )
+        assertEquals(listOf("gemini-2.0-flash", "gemini-2.0-pro"), models)
+        assertEquals("https://generativelanguage.googleapis.com/v1beta/models", protocol.modelsEndpoint(profile()))
+        assertTrue(protocol.parseModels("""{"error":{"message":"bad key"}}""").isEmpty())
+    }
+
+    @Test
     fun endpointNamesTheModelAndTheMethod() {
         assertEquals(
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",

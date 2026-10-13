@@ -1,6 +1,8 @@
 package dev.savant.ui.components
 
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,8 +21,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.savant.ui.icons.SavantIcon
+import dev.savant.ui.icons.SavantIcons
 import dev.savant.ui.theme.Savant
 import dev.savant.ui.theme.SavantDimens
 import dev.savant.ui.theme.SavantMono
@@ -129,37 +134,139 @@ fun ValueRow(
     }
 }
 
+/**
+ * One choice, laid out as a grid.
+ *
+ * A row of chips is what a long label breaks: five provider kinds in one `Row` squeeze
+ * `custom (openai compatible)` into a column of single letters. Two columns with equal weight and a
+ * two line label means a chip can never be narrower than its text — the tallest chip sets the row.
+ */
+@Composable
+fun ChoiceGrid(
+    title: String,
+    options: List<String>,
+    selected: String,
+    onSelect: (String) -> Unit,
+    columns: Int = 2,
+    modifier: Modifier = Modifier,
+) {
+    val colors = Savant.colors
+    Column(modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 11.dp)) {
+        Text(text = title, style = SavantTypography.bodyMedium, color = colors.text)
+        Spacer(Modifier.height(8.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            options.chunked(columns).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    row.forEach { option ->
+                        ChoiceChip(
+                            option = option,
+                            isSelected = option == selected,
+                            onClick = { onSelect(option) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    // Keep the last row aligned with the ones above it.
+                    repeat(columns - row.size) {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChoiceChip(
+    option: String,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = Savant.colors
+    val shape = RoundedCornerShape(4.dp)
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(if (isSelected) colors.accentDim else colors.surfaceRaised)
+            .border(SavantDimens.hairline, if (isSelected) colors.accent.copy(alpha = 0.45f) else colors.border, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = option,
+            style = SavantMono.path,
+            color = if (isSelected) colors.accent else colors.textMuted,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/**
+ * A row that opens another screen: what the page is, what it currently holds, and a chevron.
+ *
+ * The value tag is the point — a hub should answer "what is set?" without being opened, so the
+ * settings root is a table of contents rather than a form.
+ */
+@Composable
+fun LinkRow(
+    title: String,
+    subtitle: String?,
+    value: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    @DrawableRes icon: Int? = null,
+    valueColor: androidx.compose.ui.graphics.Color = Savant.colors.textMuted,
+) {
+    val colors = Savant.colors
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (icon != null) SavantIcon(icon, tint = colors.textMuted, size = 16.dp)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title, style = SavantTypography.bodyMedium, color = colors.text)
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    style = SavantMono.path,
+                    color = colors.textMuted,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (value != null) Tag(text = value, color = valueColor)
+        SavantIcon(SavantIcons.chevronRight, tint = colors.textFaint, size = 15.dp)
+    }
+}
+
+/** A section head with an explanation under it. Used by the pages the hub pushes. */
+@Composable
+fun SectionNote(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text = text,
+        style = SavantMono.tag,
+        color = Savant.colors.textFaint,
+        modifier = modifier.padding(horizontal = SavantDimens.gutter, vertical = 6.dp),
+    )
+}
+
+/** The old name, kept so a two option choice reads as a row rather than a grid. */
 @Composable
 fun ChoiceRow(
     title: String,
     options: List<String>,
     selected: String,
     onSelect: (String) -> Unit,
-) {
-    val colors = Savant.colors
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 11.dp)) {
-        Text(text = title, style = SavantTypography.bodyMedium, color = colors.text)
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            options.forEach { option ->
-                val isSelected = option == selected
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(if (isSelected) colors.accentDim else colors.surfaceRaised)
-                        .clickable { onSelect(option) }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                ) {
-                    Text(
-                        text = option,
-                        style = SavantMono.value,
-                        color = if (isSelected) colors.accent else colors.textMuted,
-                    )
-                }
-            }
-        }
-    }
-}
+) = ChoiceGrid(title = title, options = options, selected = selected, onSelect = onSelect, columns = options.size.coerceAtLeast(1))
 
 /** The horizontal gutter every settings panel sits in. */
 fun Modifier.gutterPadding(): Modifier = this

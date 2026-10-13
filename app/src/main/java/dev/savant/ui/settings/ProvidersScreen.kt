@@ -33,19 +33,23 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.savant.ai.ProviderKind
+import dev.savant.ai.ProviderModels
 import dev.savant.ai.ProviderPing
 import dev.savant.ai.ProviderProfile
 import dev.savant.ai.ProviderProfiles
 import dev.savant.ui.components.AccentButton
-import dev.savant.ui.components.ChoiceRow
+import dev.savant.ui.components.ChoiceGrid
 import dev.savant.ui.components.GhostButton
 import dev.savant.ui.components.Hairline
 import dev.savant.ui.components.SavantPanel
 import dev.savant.ui.components.ScreenTopBar
 import dev.savant.ui.components.Section
+import dev.savant.ui.components.SectionLabel
+import dev.savant.ui.components.SectionNote
 import dev.savant.ui.components.SwitchRow
 import dev.savant.ui.components.Tag
 import dev.savant.ui.components.gutterPadding
+import dev.savant.ui.icons.SavantIcons
 import dev.savant.ui.theme.Savant
 import dev.savant.ui.theme.SavantDimens
 import dev.savant.ui.theme.SavantMono
@@ -54,9 +58,10 @@ import dev.savant.ui.theme.SavantTypography
 /**
  * Providers: what savant can ask, where that goes, and which key it uses.
  *
- * The screen is a list plus one editor. Editing is explicit — nothing is saved until "save" — so a
- * half typed base url cannot become the endpoint the chat is about to call, and "test connection"
- * tests the draft on screen rather than what happens to be on disk.
+ * The screen is three panels in one scroll — what is answering, how to add another, and the editor
+ * for the one being changed. The editor is where the work went: fields stay unsaved drafts, and a
+ * connection panel answers "does this endpoint work" and "what models does it offer" before the
+ * profile is used, instead of after the chat has already failed on it.
  */
 @Composable
 fun ProvidersScreen(
@@ -73,17 +78,17 @@ fun ProvidersScreen(
 
     Column(modifier = modifier.fillMaxSize()) {
         ScreenTopBar(
-            title = "ai providers",
+            title = "ai provider",
             subtitle = state.notice ?: state.keyPlace,
             onBack = onBack,
         )
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(top = 12.dp, bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            item(key = "engine") {
-                Section("engine")
+            item(key = "answering") {
+                Section("answering now")
                 SavantPanel(modifier = Modifier.gutterPadding()) {
                     EngineRow(
                         title = "on device",
@@ -96,19 +101,21 @@ fun ProvidersScreen(
                         Hairline()
                         EngineRow(
                             title = profile.name,
-                            subtitle = "${profile.provider.label} · ${profile.model.ifBlank { "no model set" }}",
-                            status = if (profile.id == state.activeId) "active" else "tap to edit",
+                            subtitle = "${profile.provider.label} · ${profile.model.ifBlank { "no model chosen yet" }}",
+                            status = if (profile.id == state.activeId) "active" else ProviderProfiles.problem(profile) ?: "ready",
                             selected = profile.id == state.activeId,
                             onClick = { viewModel.onEdit(profile) },
                         )
-                        if (profile.id == state.activeId) {
-                            Hairline()
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                GhostButton(text = "edit", onClick = { viewModel.onEdit(profile) })
-                                Spacer(Modifier.weight(1f))
+                    }
+                    if (state.profiles.isNotEmpty()) {
+                        Hairline()
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            GhostButton(text = "add another", onClick = { viewModel.onAdd(ProviderKind.CUSTOM) })
+                            Spacer(Modifier.weight(1f))
+                            if (state.activeId != null) {
                                 GhostButton(text = "use on device instead", onClick = { viewModel.onActivate(null) })
                             }
                         }
@@ -119,19 +126,19 @@ fun ProvidersScreen(
             item(key = "add") {
                 Section("add a provider")
                 SavantPanel(modifier = Modifier.gutterPadding()) {
-                    Text(
-                        text = "a profile is a provider plus a model and a key. the key is stored on its own, " +
-                            "so renaming or retargeting a profile never touches it.",
-                        style = SavantMono.path,
-                        color = colors.textMuted,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                    )
-                    ProviderKind.entries.forEach { kind ->
-                        Hairline()
-                        AddRow(
-                            kind = kind,
-                            onClick = { viewModel.onAdd(kind) },
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = "a profile is one provider, one model and its own key. the key is stored " +
+                                "separately, so renaming or retargeting a profile never touches it.",
+                            style = SavantMono.path,
+                            color = colors.textMuted,
                         )
+                        ProviderKind.entries.forEach { kind ->
+                            AddRow(kind = kind, onClick = { viewModel.onAdd(kind) })
+                        }
                     }
                 }
             }
@@ -145,14 +152,15 @@ fun ProvidersScreen(
                             profile = draft,
                             keyMask = state.keyMask,
                             storageLabel = state.storageLabel,
-                            testing = state.testing,
-                            test = state.test,
+                            connection = state.connection,
                             isActive = draft.id == state.activeId,
                             onChange = viewModel::onEditDraft,
                             onSave = viewModel::onSave,
                             onActivate = { viewModel.onActivate(draft.id) },
                             onKey = { key -> viewModel.onKey(draft, key) },
                             onTest = { key -> viewModel.onTest(draft, key) },
+                            onReadModels = { key -> viewModel.onReadModels(draft, key) },
+                            onPickModel = { model -> viewModel.onPickModel(draft, model) },
                             onDelete = { viewModel.onDelete(draft) },
                             onClose = viewModel::onCloseEditor,
                         )
@@ -160,14 +168,18 @@ fun ProvidersScreen(
                 }
             }
 
-            item(key = "note") {
-                Text(
-                    text = "a provider only ever receives a field listing and the conversation. " +
-                        "the save file itself never leaves the device, and keys are shown masked everywhere.",
-                    style = SavantMono.tag,
-                    color = colors.textFaint,
-                    modifier = Modifier.padding(horizontal = SavantDimens.gutter, vertical = 6.dp),
-                )
+            item(key = "see") {
+                Section("what a provider may see")
+                SavantPanel(modifier = Modifier.gutterPadding()) {
+                    SwitchRow(
+                        title = "send field values",
+                        subtitle = "off sends paths and types only — useful for a save with names in it",
+                        checked = state.sendFieldValues,
+                        onChange = viewModel::onSendFieldValues,
+                    )
+                    Hairline()
+                    SectionNote("a provider receives the conversation and that listing. the save file itself never leaves the device, and over 200 kb only a field summary is sent.")
+                }
             }
         }
     }
@@ -181,7 +193,7 @@ private fun AddRow(kind: ProviderKind, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 11.dp),
+            .padding(vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
@@ -194,6 +206,8 @@ private fun AddRow(kind: ProviderKind, onClick: () -> Unit) {
                 },
                 style = SavantMono.path,
                 color = colors.textMuted,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
         }
         Spacer(Modifier.width(10.dp))
@@ -236,22 +250,25 @@ private fun EngineRow(
 /**
  * The editor for one profile.
  *
- * The key field starts empty every time — a stored key is only ever shown as its mask — and typing
- * one is a separate action from saving the profile, because the two live in different places.
+ * In three blocks, in the order a profile is actually set up: who it is, where it connects, and
+ * what it may see. The key field starts empty every time — a stored key is only ever shown as its
+ * mask — and typing one is a separate action from saving the profile, because the two live in
+ * different places.
  */
 @Composable
 private fun ProfileEditor(
     profile: ProviderProfile,
     keyMask: String,
     storageLabel: String,
-    testing: Boolean,
-    test: ProviderPing?,
+    connection: ConnectionCheck,
     isActive: Boolean,
     onChange: (ProviderProfile) -> Unit,
     onSave: (ProviderProfile) -> Unit,
     onActivate: (ProviderProfile) -> Unit,
     onKey: (String) -> Unit,
     onTest: (String) -> Unit,
+    onReadModels: (String) -> Unit,
+    onPickModel: (String) -> Unit,
     onDelete: (ProviderProfile) -> Unit,
     onClose: () -> Unit,
 ) {
@@ -268,42 +285,40 @@ private fun ProfileEditor(
             hint = "what this profile is called on this device",
             onChange = { onChange(profile.copy(name = it)) },
         )
+        ChoiceGrid(
+            title = "provider",
+            options = ProviderKind.entries.map { it.label },
+            selected = profile.provider.label,
+            onSelect = { label ->
+                ProviderKind.entries.firstOrNull { it.label == label }?.let { kind ->
+                    // Switching dialect moves the default endpoint with it, unless a base url was
+                    // typed on purpose — then it is the user's, and it stays.
+                    val defaultWas = ProviderKind.entries.any { profile.baseUrl.isBlank() || profile.baseUrl == it.defaultBaseUrl }
+                    onChange(
+                        profile.copy(
+                            provider = kind,
+                            baseUrl = if (defaultWas) kind.defaultBaseUrl else profile.baseUrl,
+                            model = if (profile.model.isBlank()) ProviderProfiles.defaultModel(kind) else profile.model,
+                        ),
+                    )
+                }
+            },
+        )
+
+        Hairline()
+        SectionLabel(text = "connection")
+
         Field(
             label = "base url",
             value = profile.baseUrl,
             hint = profile.provider.defaultBaseUrl.ifBlank { "https://your-endpoint/v1" },
             onChange = { onChange(profile.copy(baseUrl = it.trim())) },
         )
-        Field(
-            label = "model",
-            value = profile.model,
-            hint = "the model name this provider expects",
-            onChange = { onChange(profile.copy(model = it.trim())) },
-        )
-        ChoiceRow(
-            title = "temperature",
-            options = TEMPERATURES,
-            selected = profile.temperature.toString(),
-            onSelect = { onChange(profile.copy(temperature = it.toFloatOrNull() ?: 0.2f)) },
-        )
-        ChoiceRow(
-            title = "max output tokens",
-            options = TOKEN_LIMITS,
-            selected = profile.maxOutputTokens.toString(),
-            onSelect = { onChange(profile.copy(maxOutputTokens = it.toIntOrNull() ?: 1024)) },
-        )
-        SwitchRow(
-            title = "stream the answer",
-            subtitle = "show the reply while it is being written",
-            checked = profile.streaming,
-            onChange = { onChange(profile.copy(streaming = it)) },
-        )
 
-        Hairline()
         Text(
             text = if (keyMask.isBlank()) "no key stored" else "key stored · $keyMask",
             style = SavantMono.path,
-            color = if (keyMask.isBlank()) colors.caution else colors.textMuted,
+            color = if (keyMask.isBlank() && ProviderProfiles.needsKey(profile)) colors.caution else colors.textMuted,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -333,6 +348,9 @@ private fun ProfileEditor(
                 )
             }
             GhostButton(text = "save key", onClick = { onKey(typedKey.trim()); typedKey = "" })
+            if (keyMask.isNotBlank()) {
+                GhostButton(text = "clear", onClick = { onKey(""); typedKey = "" })
+            }
         }
         Text(
             text = "keys are written to $storageLabel · never to the profile, never to a backup",
@@ -340,45 +358,273 @@ private fun ProfileEditor(
             color = colors.textFaint,
         )
 
+        ConnectionPanel(
+            profile = profile,
+            connection = connection,
+            onTest = { onTest(typedKey.trim()) },
+            onReadModels = { onReadModels(typedKey.trim()) },
+            onPickModel = onPickModel,
+        )
+
+        Field(
+            label = "model",
+            value = profile.model,
+            hint = ProviderProfiles.defaultModel(profile.provider).ifBlank { "the model name this provider expects" },
+            onChange = { onChange(profile.copy(model = it.trim())) },
+        )
+
+        Hairline()
+        SectionLabel(text = "generation")
+        ChoiceGrid(
+            title = "temperature",
+            options = TEMPERATURES,
+            selected = profile.temperature.toString(),
+            onSelect = { onChange(profile.copy(temperature = it.toFloatOrNull() ?: 0.2f)) },
+        )
+        ChoiceGrid(
+            title = "max output tokens",
+            options = TOKEN_LIMITS,
+            selected = profile.maxOutputTokens.toString(),
+            onSelect = { onChange(profile.copy(maxOutputTokens = it.toIntOrNull() ?: 1024)) },
+        )
+        SwitchRow(
+            title = "stream the answer",
+            subtitle = "show the reply while it is being written",
+            checked = profile.streaming,
+            onChange = { onChange(profile.copy(streaming = it)) },
+        )
+
         Hairline()
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            GhostButton(
-                text = if (testing) "testing…" else "test connection",
-                onClick = { onTest(typedKey.trim()) },
-                enabled = !testing,
-            )
-            if (keyMask.isNotBlank()) {
-                GhostButton(text = "clear key", onClick = { onKey(""); typedKey = "" })
-            }
+            GhostButton(text = "close", onClick = onClose)
             Spacer(Modifier.weight(1f))
+            GhostButton(text = "delete", onClick = { onDelete(profile) })
             AccentButton(
                 text = if (isActive) "active" else "use this",
                 onClick = { onActivate(profile) },
                 enabled = !isActive,
             )
         }
-        test?.let { result ->
-            Text(
-                text = buildString {
-                    append(if (result.ok) "connected" else "failed")
-                    append(" · ").append(result.detail)
-                    if (result.ok) append(" · ${result.latencyMillis} ms")
-                    result.endpoint?.let { append(" · ").append(it) }
-                },
-                style = SavantMono.path,
-                color = if (result.ok) colors.positive else colors.negative,
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            ProviderProfiles.problem(profile)?.let { problem ->
+                Text(text = "still missing: $problem", style = SavantMono.path, color = colors.caution)
+            }
+            Spacer(Modifier.weight(1f))
+            AccentButton(text = "save", onClick = { onSave(profile) })
+        }
+    }
+}
+
+/**
+ * The connection panel.
+ *
+ * Two buttons, two answers, kept side by side: a connection test says whether the endpoint, the key
+ * and the model agree, and the model list says what names this account may ask for. A successful
+ * test reads the list too, so one tap usually fills both. Nothing here sends a conversation or a
+ * field listing — the only request body is the one a test makes, and it is the word `ok`.
+ */
+@Composable
+private fun ConnectionPanel(
+    profile: ProviderProfile,
+    connection: ConnectionCheck,
+    onTest: () -> Unit,
+    onReadModels: () -> Unit,
+    onPickModel: (String) -> Unit,
+) {
+    val colors = Savant.colors
+    val test = connection.test
+    val models = connection.models
+
+    SavantPanel(
+        modifier = Modifier.fillMaxWidth(),
+        background = colors.surfaceRaised,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(text = "connection", style = SavantTypography.bodyMedium, color = colors.text)
+                Text(
+                    text = "test the endpoint and read the models it offers — neither sends anything about a save file",
+                    style = SavantMono.path,
+                    color = colors.textMuted,
+                )
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                GhostButton(
+                    text = if (connection.testing) "testing…" else "test connection",
+                    icon = SavantIcons.activity,
+                    onClick = onTest,
+                    enabled = !connection.busy,
+                )
+                GhostButton(
+                    text = if (connection.reading) "reading…" else "read models",
+                    icon = SavantIcons.refresh,
+                    onClick = onReadModels,
+                    enabled = !connection.busy,
+                )
+            }
+
+            if (test != null) {
+                ConnectionResultRow(
+                    ok = test.ok,
+                    headline = if (test.ok) "answered" else "failed",
+                    detail = test.detail,
+                    endpoint = test.endpoint,
+                    model = test.model,
+                    latencyMillis = test.latencyMillis,
+                )
+            }
+
+            if (models != null) {
+                ModelList(
+                    models = models,
+                    selected = profile.model,
+                    onPickModel = onPickModel,
+                )
+            } else if (test == null) {
+                Text(
+                    text = connection.prompt,
+                    style = SavantMono.tag,
+                    color = colors.textFaint,
+                )
+            }
+        }
+    }
+}
+
+/** One line per answer: what happened, where it happened, and how long it took. */
+@Composable
+private fun ConnectionResultRow(
+    ok: Boolean,
+    headline: String,
+    detail: String,
+    endpoint: String?,
+    model: String?,
+    latencyMillis: Long,
+) {
+    val colors = Savant.colors
+    val tone = if (ok) colors.positive else colors.negative
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Tag(text = headline, color = tone, emphasis = true)
+            endpoint?.let {
+                Text(
+                    text = it,
+                    style = SavantMono.tag,
+                    color = colors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (ok && latencyMillis > 0) {
+                Text(text = "${latencyMillis} ms", style = SavantMono.tag, color = colors.textFaint)
+            }
+        }
+        Text(text = detail, style = SavantMono.path, color = if (ok) colors.textMuted else tone)
+        if (ok && !model.isNullOrBlank()) {
+            Text(text = "model · $model", style = SavantMono.tag, color = colors.textFaint)
+        }
+    }
+}
+
+/**
+ * The model list, as a picker.
+ *
+ * Long lists are common on openrouter and on a local server with a few dozen pulls, so the list
+ * filters as the user types and shows the first [VISIBLE_MODELS] until asked for the rest. Picking
+ * a name only changes the draft — nothing is saved until `save`, exactly like every other field.
+ */
+@Composable
+private fun ModelList(
+    models: ProviderModels,
+    selected: String,
+    onPickModel: (String) -> Unit,
+) {
+    val colors = Savant.colors
+    var filter by remember(models) { mutableStateOf("") }
+    var showAll by remember(models) { mutableStateOf(false) }
+
+    if (!models.ok) {
+        Text(
+            text = "model list · ${models.detail}",
+            style = SavantMono.path,
+            color = colors.caution,
+        )
+        return
+    }
+
+    val matching = remember(models, filter) {
+        val needle = filter.trim().lowercase()
+        if (needle.isEmpty()) models.models else models.models.filter { it.lowercase().contains(needle) }
+    }
+    val visible = if (showAll) matching else matching.take(VISIBLE_MODELS)
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionLabel(text = "models")
+            Tag(text = "${matching.size} of ${models.count}", color = colors.textMuted)
+        }
+
+        if (models.count > VISIBLE_MODELS) {
+            InlineField(
+                value = filter,
+                hint = "filter ${models.count} models",
+                onChange = { filter = it },
             )
         }
 
-        Hairline()
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            GhostButton(text = "close", onClick = onClose)
-            Spacer(Modifier.weight(1f))
-            GhostButton(text = "delete", onClick = { onDelete(profile) })
-            AccentButton(text = "save", onClick = { onSave(profile) })
+        SavantPanel(modifier = Modifier.fillMaxWidth()) {
+            if (visible.isEmpty()) {
+                Text(
+                    text = "nothing matches \"$filter\"",
+                    style = SavantMono.path,
+                    color = colors.textMuted,
+                    modifier = Modifier.padding(10.dp),
+                )
+            }
+            visible.forEachIndexed { index, model ->
+                if (index > 0) Hairline()
+                ModelRow(
+                    model = model,
+                    isSelected = model == selected,
+                    onClick = { onPickModel(model) },
+                )
+            }
         }
-        ProviderProfiles.problem(profile)?.let { problem ->
-            Text(text = "still missing: $problem", style = SavantMono.path, color = colors.caution)
+
+        if (!showAll && matching.size > visible.size) {
+            GhostButton(
+                text = "show all ${matching.size}",
+                onClick = { showAll = true },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ModelRow(model: String, isSelected: Boolean, onClick: () -> Unit) {
+    val colors = Savant.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = model,
+            style = SavantMono.path,
+            color = if (isSelected) colors.accent else colors.text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (isSelected) {
+            Spacer(Modifier.width(8.dp))
+            Tag(text = "in use", color = colors.accent, emphasis = true)
         }
     }
 }
@@ -417,5 +663,39 @@ private fun Field(
     }
 }
 
-private val TEMPERATURES = listOf("0.0", "0.2", "0.7", "1.0")
+/** A shorter field for a filter, with no label above it. */
+@Composable
+private fun InlineField(
+    value: String,
+    hint: String,
+    onChange: (String) -> Unit,
+) {
+    val colors = Savant.colors
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(colors.background, RoundedCornerShape(SavantDimens.radius))
+            .border(SavantDimens.hairline, colors.border, RoundedCornerShape(SavantDimens.radius))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+    ) {
+        BasicTextField(
+            value = value,
+            onValueChange = onChange,
+            singleLine = true,
+            textStyle = SavantMono.path.copy(color = colors.text),
+            cursorBrush = SolidColor(colors.accent),
+            decorationBox = { inner ->
+                if (value.isEmpty()) {
+                    Text(text = hint, style = SavantMono.path, color = colors.textFaint)
+                }
+                inner()
+            },
+        )
+    }
+}
+
+/** How many models the picker shows before "show all". */
+private const val VISIBLE_MODELS = 6
+
+private val TEMPERATURES = listOf("0.0", "0.1", "0.2", "0.4", "0.7", "1.0")
 private val TOKEN_LIMITS = listOf("512", "1024", "2048", "4096")

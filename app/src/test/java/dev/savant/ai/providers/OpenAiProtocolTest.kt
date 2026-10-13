@@ -223,6 +223,28 @@ class OpenAiProtocolTest {
     }
 
     @Test
+    fun listingModelsPointsAtTheDialectsOwnModelsPath() {
+        assertEquals(
+            "https://api.openai.com/v1/models",
+            protocol.modelsEndpoint(profile()),
+        )
+        assertEquals(
+            "http://192.168.1.9:11434/v1/models",
+            protocol.modelsEndpoint(profile(ProviderKind.CUSTOM, baseUrl = "http://192.168.1.9:11434/v1/")),
+        )
+    }
+
+    @Test
+    fun theModelListIsReadFromTheDataArrayAndSorted() {
+        val models = protocol.parseModels(
+            """{"object":"list","data":[{"id":"gpt-4o"},{"id":"gpt-4o-mini"},{"id":"gpt-4o"}]}""",
+        )
+        assertEquals(listOf("gpt-4o", "gpt-4o-mini"), models)
+        assertTrue(protocol.parseModels("""{"error":{"message":"nope"}}""").isEmpty())
+        assertTrue(protocol.parseModels("not json at all").isEmpty())
+    }
+
+    @Test
     fun anErrorInsideTheStreamIsReported() {
         val reader = protocol.streamReader(profile())
         val thrown = runCatching {
