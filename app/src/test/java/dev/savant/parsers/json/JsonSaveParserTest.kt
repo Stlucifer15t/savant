@@ -6,6 +6,7 @@ import dev.savant.domain.model.FieldCategory
 import dev.savant.domain.model.FieldEdit
 import dev.savant.domain.model.FieldType
 import dev.savant.domain.model.FieldValue
+import dev.savant.domain.model.asText
 import dev.savant.domain.model.displayText
 import dev.savant.domain.parser.CorruptFileException
 import dev.savant.domain.parser.ExportVerifier
@@ -354,5 +355,54 @@ class JsonSaveParserTest {
         assertFalse(report.ok)
         assertEquals(1, report.mismatches.size)
         assertEquals("player.gold", report.mismatches[0].path)
+    }
+
+    // ---- non ascii text ----------------------------------------------------------
+
+    @Test
+    fun utf8ValuesReadAsTextNotAsBytes() {
+        val source = "{\"player\":{\"name\":\"José Ñandú — 日本語\",\"gold\":10}}"
+        val result = parse(source)
+
+        // One char per byte would read this as mojibake and re-encode it wrong on the next edit.
+        assertEquals(FieldValue.Text("José Ñandú — 日本語"), result.tree.node("player.name")?.value)
+        assertEquals("José Ñandú — 日本語", result.tree.node("player.name")!!.value!!.asText())
+    }
+
+    @Test
+    fun editingAnotherFieldLeavesUtf8BytesAlone() {
+        val source = "{\"player\":{\"name\":\"José\",\"gold\":10}}"
+        val result = parse(source)
+
+        val applied = result.document.applyEdits(
+            listOf(FieldEdit.of(result.tree.node("player.gold")!!, FieldValue.Int64(20))),
+        )
+        assertEquals(1, applied.applied.size)
+
+        val rebuilt = String(result.document.toBytes(), Charsets.UTF_8)
+        assertEquals("{\"player\":{\"name\":\"José\",\"gold\":20}}", rebuilt)
+    }
+
+    @Test
+    fun writingAUtf8FieldEncodesUtf8() {
+        val source = "{\"name\":\"José\",\"gold\":1}"
+        val result = parse(source)
+
+        result.document.applyEdits(
+            listOf(FieldEdit.of(result.tree.node("name")!!, FieldValue.Text("Renée · 日本語"))),
+        )
+
+        val rebuilt = String(result.document.toBytes(), Charsets.UTF_8)
+        assertEquals("{\"name\":\"Renée · 日本語\",\"gold\":1}", rebuilt)
+    }
+
+    @Test
+    fun aTruncatedUtf8SequenceStillReads() {
+        // 0xC3 with no continuation byte: not text anybody meant, but the save must still open.
+        val bytes = "{\"a\":\"".toByteArray(Charsets.UTF_8) +
+            byteArrayOf(0xC3.toByte()) +
+            "\"}".toByteArray(Charsets.UTF_8)
+        val result = parser.parse(ParseRequest(bytes, "save.json"))
+        assertEquals(1, result.tree.totalCount)
     }
 }

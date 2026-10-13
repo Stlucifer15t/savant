@@ -262,10 +262,58 @@ internal class JsonReader(private val bytes: ByteArray) {
                     warnOnce("newline inside a string literal")
                     text.append('\n')
                 }
-                else -> text.append(c.toInt().toChar())
+                else -> {
+                    val byte = c.toInt() and 0xFF
+                    if (byte < 0x80) {
+                        text.append(byte.toChar())
+                    } else if (!appendUtf8(text, byte)) {
+                        // Not a utf-8 sequence: keep the byte as a char rather than throwing, so a
+                        // save with a stray binary blob still reads.
+                        text.append(byte.toChar())
+                    }
+                }
             }
             pos++
         }
+    }
+
+    /**
+     * Decodes one utf-8 sequence starting at [pos] into [text] and steps over its continuation bytes.
+     *
+     * The reader works on bytes so an untouched file is written back identically, but a *value* has
+     * to be a real string: `José` is five bytes, and one char per byte would show as mojibake and be
+     * re-encoded as nine bytes the moment that field is edited. Overlong encodings, surrogates and
+     * truncated sequences return false and fall back to the raw byte.
+     */
+    private fun appendUtf8(text: StringBuilder, lead: Int): Boolean {
+        val extra = when {
+            lead and 0xE0 == 0xC0 -> 1
+            lead and 0xF0 == 0xE0 -> 2
+            lead and 0xF8 == 0xF0 -> 3
+            else -> return false
+        }
+        if (pos + extra >= bytes.size) return false
+        var codePoint = lead and when (extra) {
+            1 -> 0x1F
+            2 -> 0x0F
+            else -> 0x07
+        }
+        for (i in 1..extra) {
+            val continuation = bytes[pos + i].toInt() and 0xFF
+            if (continuation and 0xC0 != 0x80) return false
+            codePoint = (codePoint shl 6) or (continuation and 0x3F)
+        }
+        val shortest = when {
+            codePoint < 0x80 -> 1
+            codePoint < 0x800 -> 2
+            codePoint < 0x10000 -> 3
+            else -> 4
+        }
+        if (shortest != extra + 1) return false
+        if (codePoint in 0xD800..0xDFFF || codePoint > 0x10FFFF) return false
+        text.appendCodePoint(codePoint)
+        pos += extra
+        return true
     }
 
     private fun readUnquotedKey(): String {

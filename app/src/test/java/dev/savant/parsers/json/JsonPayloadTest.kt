@@ -102,6 +102,15 @@ tab	end"""
     }
 
     @Test
+    fun `non ascii text survives a payload round trip`() {
+        val text = "José Ñandú — 日本語 · ünïcøde"
+        val payload = JsonPayload.write(obj("v" to str(text), "list" to arr(str(text))))
+        val back = JsonPayload.read(payload)
+        assertEquals(text, back.string("v"))
+        assertEquals(listOf(text), back.strings("list"))
+    }
+
+    @Test
     fun `accessors are tolerant of the wrong shape`() {
         val payload = JsonPayload.read("""{"n":5,"s":"x","b":true,"a":[1,2],"o":{"k":1}}""")
         assertNull(payload.string("n"))
