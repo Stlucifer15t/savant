@@ -1,38 +1,36 @@
 package dev.savant.data.settings
 
-import javax.inject.Inject
-import javax.inject.Singleton
-
 /**
- * API keys and tokens.
+ * Where keys live.
  *
- * Step 3 keeps them in memory for the process lifetime only: nothing is written to disk, which is
- * the safest possible default and is enough while the assistant is the on-device one. Step 6 swaps
- * this implementation for EncryptedSharedPreferences so a configured provider survives a restart,
- * and every UI surface keeps showing only [dev.savant.ai.AiPayload.redactKey] output.
+ * One rule: a key is never in [SavantSettings], never in a profile, never in a log and never in a
+ * backup. Settings carry a masked echo (`****abcd`) so the ui can say a key is set; this store carries
+ * the key itself, encrypted, and hands it back only to the code that is about to put it in an
+ * authorization header.
+ *
+ * Implementations: [EncryptedSecretStore] on device, and a plain map in tests.
  */
-@Singleton
-class SecretStore @Inject constructor() {
+interface SecretStore {
 
-    private val values = mutableMapOf<String, String>()
+    /** False only when the platform keystore refused, which the ui says out loud. */
+    val encrypted: Boolean get() = true
 
-    fun put(id: String, secret: String) {
-        if (secret.isBlank()) values.remove(id) else values[id] = secret
-    }
+    fun put(id: String, secret: String)
 
-    fun get(id: String): String? = values[id]
+    fun get(id: String): String?
 
-    fun has(id: String): Boolean = !values[id].isNullOrBlank()
+    fun has(id: String): Boolean
 
-    fun clear(id: String) {
-        values.remove(id)
-    }
+    fun clear(id: String)
 
-    fun clearAll() = values.clear()
+    fun clearAll()
 
     companion object {
         const val PROVIDER_KEY = "provider.apiKey"
         const val SEARCH_KEY = "search.apiKey"
         const val MCP_PREFIX = "mcp."
+
+        /** Each provider profile keeps its own key, so switching profiles does not overwrite one. */
+        fun profileKey(profileId: String): String = "profile.$profileId"
     }
 }

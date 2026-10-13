@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext policy.
+
+  Android's domain rules cannot express "private ip ranges", and savant has to reach a llama.cpp or
+  ollama box on the local network over plain http. So the platform is told cleartext is permitted and
+  the real gate lives in code: dev.savant.ai.provider.NetworkPolicy refuses any http url that is not
+  localhost, loopback, link local or one of the three private ranges, and says why in the ui.
+
+  https everywhere else, and the key never travels in a url.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

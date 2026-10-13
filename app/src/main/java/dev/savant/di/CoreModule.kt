@@ -4,8 +4,6 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
-import dev.savant.ai.AssistantEngine
-import dev.savant.ai.LocalAssistant
 import dev.savant.ai.ToolExecutor
 import dev.savant.domain.parser.ExportVerifier
 import dev.savant.domain.parser.ParserRegistry
@@ -57,15 +55,14 @@ object CoreModule {
     @Singleton
     fun saveEditor(registry: ParserRegistry, verifier: ExportVerifier): SaveEditor = SaveEditor(registry, verifier)
 
-    @Provides
-    @Singleton
-    fun toolExecutor(editor: SaveEditor): ToolExecutor = ToolExecutor(editor)
-
     /**
-     * The on-device assistant. Step 6 replaces this binding with a provider-backed engine that
-     * talks to an LLM and routes tool calls through the very same [ToolExecutor].
+     * Runs tool calls against the open session.
+     *
+     * Both engines — the on device command parser and any provider — go through this one object, so
+     * "a model can only propose edits" is a property of the wiring and not of one code path. The
+     * [dev.savant.ai.AssistantEngine] binding lives in [dev.savant.di.AiModule].
      */
     @Provides
     @Singleton
-    fun assistantEngine(executor: ToolExecutor): AssistantEngine = LocalAssistant(executor)
+    fun toolExecutor(editor: SaveEditor): ToolExecutor = ToolExecutor(editor)
 }

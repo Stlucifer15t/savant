@@ -7,6 +7,8 @@
       Every save file enters through the Storage Access Framework picker or the share sheet,
       and every export leaves through ACTION_CREATE_DOCUMENT or a FileProvider share.
       INTERNET is used from step 6 onwards (LLM providers, MCP servers, search API).
+      Cleartext http is permitted by the platform config only so a local model server can be reached;
+      dev.savant.ai.provider.NetworkPolicy refuses any http url that is not on this network.
     -->
     <uses-permission android:name="android.permission.INTERNET" />
 
@@ -27,6 +29,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Savant"
         android:enableOnBackInvokedCallback="true"
+        android:networkSecurityConfig="@xml/network_security_config"
         tools:targetApi="33">
 
         <activity

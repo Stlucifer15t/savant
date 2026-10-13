@@ -14,6 +14,7 @@ composeBom = "2024.10.01"
 navigationCompose = "2.8.4"
 datastore = "1.1.1"
 room = "2.6.1"
+securityCrypto = "1.1.0-alpha06"
 documentfile = "1.0.1"
 coroutines = "1.9.0"
 
@@ -34,6 +35,9 @@ androidx-documentfile = { group = "androidx.documentfile", name = "documentfile"
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+# EncryptedSharedPreferences + a keystore backed MasterKey. This is the only dependency added for
+# provider keys, and it is the one the platform does not provide.
+androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
 
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
 androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }

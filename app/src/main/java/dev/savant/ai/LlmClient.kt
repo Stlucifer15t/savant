@@ -87,7 +87,17 @@ data class ProviderProfile(
     val streaming: Boolean = true,
     val systemPromptOverride: String? = null,
     val active: Boolean = false,
-)
+) {
+    /** What was typed, or the provider's own endpoint when the field was left alone. */
+    val effectiveBaseUrl: String get() = baseUrl.trim().ifBlank { provider.defaultBaseUrl }
+
+    /** A profile can only be used once it has a model and, for remote providers, a key. */
+    fun missingKey(hasKey: Boolean): String? = when {
+        model.isBlank() -> "no model name"
+        !hasKey -> "no api key stored"
+        else -> null
+    }
+}
 
 enum class ProviderKind(val id: String, val label: String, val defaultBaseUrl: String, val keyHint: String) {
     CLAUDE("claude", "claude", "https://api.anthropic.com/v1", "sk-ant-..."),
