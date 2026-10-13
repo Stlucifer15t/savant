@@ -186,7 +186,7 @@ internal class XmlReader(private val bytes: ByteArray) {
                 pos++
                 skipInlineWhitespace()
                 val quote = if (pos < bytes.size && (bytes[pos] == '"'.code.toByte() || bytes[pos] == '\''.code.toByte())) {
-                    val q = bytes[pos].toInt().toChar()
+                    val q = bytes[pos].code.toChar()
                     pos++
                     val valueStart = pos
                     val end = indexOfByte(q.code.toByte(), pos)
@@ -260,7 +260,7 @@ internal class XmlReader(private val bytes: ByteArray) {
     private fun matches(text: String, ignoreCase: Boolean = false): Boolean {
         if (pos + text.length > bytes.size) return false
         for (i in text.indices) {
-            val a = bytes[pos + i].toInt().toChar()
+            val a = bytes[pos + i].code.toChar()
             val b = text[i]
             if (if (ignoreCase) a.lowercaseChar() != b.lowercaseChar() else a != b) return false
         }
@@ -289,12 +289,12 @@ internal class XmlReader(private val bytes: ByteArray) {
 
     private fun Byte.isNameStart(): Boolean {
         val c = toInt().toChar()
-        return c.isLetter() || c == '_' || c == ':' || c.toInt() > 0x7f
+        return c.isLetter() || c == '_' || c == ':' || c.code > 0x7f
     }
 
     private fun Byte.isNameChar(): Boolean {
         val c = toInt().toChar()
-        return c.isLetterOrDigit() || c == '_' || c == '-' || c == '.' || c == ':' || c.toInt() > 0x7f
+        return c.isLetterOrDigit() || c == '_' || c == '-' || c == '.' || c == ':' || c.code > 0x7f
     }
 
     companion object {
