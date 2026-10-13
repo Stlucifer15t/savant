@@ -86,6 +86,7 @@ import dev.savant.ui.components.GhostButton
 import dev.savant.ui.components.Hairline
 import dev.savant.ui.components.NoticeCard
 import dev.savant.ui.components.ParseProgress
+import dev.savant.ui.components.SavantPanel
 import dev.savant.ui.components.SectionLabel
 import dev.savant.ui.components.SessionTopBar
 import dev.savant.ui.components.UserBubble

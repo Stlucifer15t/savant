@@ -56,7 +56,10 @@ object McpCodec {
         val ids = servers.map { it.id }.toSet()
         val tools = json.obj("tools")?.members?.mapNotNull { (serverId, value) ->
             if (serverId !in ids) return@mapNotNull null
-            serverId to (value as? Json.Arr)?.items?.mapNotNull { decodeTool(it, serverId) } ?: emptyList()
+            val listed: List<McpTool> = (value as? Json.Arr)?.items
+                ?.mapNotNull { item -> decodeTool(item, serverId) }
+                ?: emptyList()
+            serverId to listed
         }?.toMap() ?: emptyMap()
         return McpSet(servers = servers, tools = tools)
     }

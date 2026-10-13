@@ -35,7 +35,6 @@ import dev.savant.ai.ProviderKind
 import dev.savant.ai.ProviderProfile
 import dev.savant.ai.provider.NetworkEvent
 import dev.savant.ai.provider.NetworkPolicy
-import dev.savant.ai.provider.NetworkPolicy
 import dev.savant.ai.provider.ProfileSet
 import dev.savant.ai.web.SearchProvider
 import dev.savant.mcp.McpAuth
