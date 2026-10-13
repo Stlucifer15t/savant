@@ -165,6 +165,25 @@ class MappedParserTest {
     }
 
     @Test
+    fun renameReachesKeysThatNoMappingMentions() {
+        val json = """
+            {"gameName":"renamed","parser":"json","fileMatch":["*.json"],
+             "rename":{"gld":"Gold","tutorial":"Tutorial done"}}
+        """.trimIndent()
+
+        val result = parse(json = json)
+
+        // A rename-only plugin is a plugin: names are half of what makes a save readable.
+        assertEquals("Gold", result.tree.node("player.gld")!!.label)
+        assertEquals("Tutorial done", result.tree.node("flags.tutorial")!!.label)
+        assertTrue(result.tree.node("player.gld")!!.aiGuess!!.explanation!!.contains("renamed by plugin"))
+        assertEquals(0.9f, result.tree.node("player.gld")!!.aiGuess!!.confidence, 0.001f)
+        // A field the rename map does not mention keeps whatever the parser made of it.
+        assertEquals("hp_2", result.tree.node("player.hp_2")!!.sourceKey)
+        assertTrue(result.log.any { it.text.contains("2 field(s) named") })
+    }
+
+    @Test
     fun aMappingCanMakeAFieldReadOnly() {
         val json = """
             {"gameName":"careful","parser":"json","fileMatch":["*.json"],"fields":[

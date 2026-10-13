@@ -66,10 +66,15 @@ class MappedParser(
     }
 
     private fun applyMappings(tree: FieldTree): Mapped {
-        if (plugin.fields.isEmpty()) return Mapped(tree, 0)
+        if (plugin.fields.isEmpty() && plugin.rename.isEmpty()) return Mapped(tree, 0)
         val byPath = plugin.fields.associateBy { it.path }
         val updates = tree.all.mapNotNull { node ->
-            val mapping = byPath[node.path] ?: byPath[wildcard(node.path)] ?: return@mapNotNull null
+            val mapping = byPath[node.path] ?: byPath[wildcard(node.path)]
+            if (mapping == null) {
+                // No mapping for this node: a `rename` entry may still have something to say about it.
+                val onlyRenamed = renamed(node) ?: return@mapNotNull null
+                return@mapNotNull onlyRenamed.path to onlyRenamed
+            }
             if (mapping.fieldType != null && mapping.fieldType != node.type) {
                 // A plugin that disagrees with the file about the type is a warning, not a rewrite:
                 // the bytes are the truth, and the mapping is somebody's note about them.
@@ -90,6 +95,22 @@ class MappedParser(
         }
         if (updates.isEmpty()) return Mapped(tree, 0)
         return Mapped(tree.withNodes(updates.toMap()), updates.size)
+    }
+
+    /**
+     * The `rename` half of a plugin: a display name for a cryptic key, with no type and no limits.
+     *
+     * Matched on the raw key and on the last path segment, so `{"gld": "Gold"}` reaches `player.gld`
+     * without the plugin author writing every path it appears at. Marked as a guess, because it is
+     * somebody's note about the file and not the file's own claim.
+     */
+    private fun renamed(node: Node): Node? {
+        if (plugin.rename.isEmpty()) return null
+        val name = plugin.rename[node.sourceKey] ?: plugin.rename[node.path.substringAfterLast('.')] ?: return null
+        if (node.aiGuess?.displayName == name) return null
+        // A plugin's rename outranks whatever savant guessed from the key: a person said this, and a
+        // person who plays the game knows more about it than a tokeniser does.
+        return node.copy(aiGuess = AiGuess(name, 0.9f, "renamed by plugin ${plugin.gameName}"))
     }
 
     /** `party[2].hp` is matched by a mapping written as `party[*].hp`. */

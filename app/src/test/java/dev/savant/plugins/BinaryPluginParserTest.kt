@@ -245,6 +245,65 @@ class BinaryPluginParserTest {
         assertTrue(applied.rejected.single().reason.contains("no such field"))
     }
 
+    @Test
+    fun stringAndFlagFieldsAreSizedByThePlugin() {
+        val json = """
+            {"gameName":"names","fileMatch":["quest*.sav"],"parser":"binary","fields":[
+              { "path": "player.name", "offset": 24, "type": "str", "length": 8, "name": "Name" },
+              { "path": "flags.tutorial", "offset": 22, "type": "bool" }
+            ]}
+        """.trimIndent()
+        val bytes = payload()
+        "Aric".toByteArray(Charsets.US_ASCII).copyInto(bytes, 24)
+        bytes[22] = 1
+
+        val result = parse(bytes, json = json)
+        assertEquals(FieldValue.Text("Aric"), result.tree.node("player.name")!!.value)
+        assertEquals("Name", result.tree.node("player.name")!!.label)
+        assertEquals(8, result.tree.node("player.name")!!.byteLength)
+        assertEquals(FieldValue.Bool(true), result.tree.node("flags.tutorial")!!.value)
+
+        // Writing pads with NULs and keeps the field's own width.
+        result.document.applyEdits(listOf(FieldEdit.of(result.tree.node("player.name")!!, FieldValue.Text("Bo"))))
+        val written = result.document.toBytes()
+        assertEquals("Bo", String(written, 24, 8, Charsets.UTF_8).trimEnd('\u0000'))
+        assertEquals(0, written[26].toInt())
+        assertEquals(96, written.size)
+
+        // A longer name is refused rather than truncated: half a name is a corrupted save.
+        val tooLong = result.document.applyEdits(
+            listOf(FieldEdit.of(result.document.tree.node("player.name")!!, FieldValue.Text("a very long name"))),
+        )
+        assertEquals(0, tooLong.applied.size)
+        assertTrue(tooLong.rejected.single().reason.contains("does not fit"))
+
+        result.document.applyEdits(listOf(FieldEdit.of(result.document.tree.node("flags.tutorial")!!, FieldValue.Bool(false))))
+        assertEquals(0, result.document.toBytes()[22].toInt())
+    }
+
+    @Test
+    fun aStringFieldWithoutALengthIsSkippedWithAWarning() {
+        val json = """
+            {"gameName":"names","fileMatch":["quest*.sav"],"parser":"binary","fields":[
+              { "path": "player.name", "offset": 24, "type": "str" },
+              { "path": "player.gold", "offset": 8, "type": "u32" }
+            ]}
+        """.trimIndent()
+        val result = parse(payload(), json = json)
+
+        assertNull(result.tree.node("player.name"))
+        assertTrue(result.tree.warnings.any { it.contains("no length") })
+        assertEquals(120L, (result.tree.node("player.gold")!!.value as FieldValue.Int64).value)
+    }
+
+    @Test
+    fun aStringFieldWithoutALengthWillNotImport() {
+        val json = """{"gameName":"x","parser":"binary","fields":[{"path":"a","type":"str","offset":0}]}"""
+        val result = PluginCodec.decode(json)
+        assertTrue(result is PluginDecode.Invalid)
+        assertTrue((result as PluginDecode.Invalid).reasons.joinToString().contains("needs a length"))
+    }
+
     // ---- codecs and failures ---------------------------------------------------------
 
     @Test

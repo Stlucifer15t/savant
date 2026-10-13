@@ -208,9 +208,21 @@ class PluginCodecTest {
         assertTrue(spec.range.exclude.isEmpty())
 
         // When the digest is inside the range it covers, it has to be excluded or nothing validates.
-        val overlapping = PluginChecksum(strategy = "crc32", rangeStart = 0, rangeEnd = -1, storedAt = 8, storedWidth = 4)
+        val overlapping = PluginChecksum(strategy = "crc32", rangeStart = 0, rangeLength = -1, storedAt = 8, storedWidth = 4)
             .toSpec(Endianness.LITTLE)!!
         assertTrue(overlapping.range.exclude.any { it.first == 8L && it.last == 11L })
+    }
+
+    @Test
+    fun aRangeIsAStartAndALengthNotAStartAndAnEnd() {
+        val spec = PluginChecksum(strategy = "adler32", rangeStart = 4, rangeLength = 16, storedAt = 0, storedWidth = 4)
+            .toSpec(Endianness.BIG)!!
+
+        assertEquals(4L, spec.range.start)
+        assertEquals(16L, spec.range.length)
+        assertEquals(Endianness.BIG, spec.endianness)
+        // The digest at 0..3 sits before the range it covers, so nothing is carved out.
+        assertTrue(spec.range.exclude.isEmpty())
     }
 
     @Test

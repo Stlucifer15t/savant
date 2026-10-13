@@ -55,14 +55,15 @@ enum class PluginSource(val label: String) {
  * A checksum a plugin describes.
  *
  * Mirrors the documented json: `{ "strategy": "crc32", "range": [4, -1], "storedAt": [0, 4] }`,
- * where `range` is `[start, endExclusive]` and a negative end means "to the end of the payload", and
+ * where `range` is `[start, length]` and a negative length means "to the end of the payload", and
  * `storedAt` is `[offset, width]`. The stored bytes are excluded from the range automatically when
  * they fall inside it, which is what almost every format does.
  */
 data class PluginChecksum(
     val strategy: String,
     val rangeStart: Long = 0L,
-    val rangeEnd: Long = -1L,
+    /** Length of the covered range; negative means "to the end of the payload". */
+    val rangeLength: Long = -1L,
     val storedAt: Long = 0L,
     val storedWidth: Int? = null,
     val endianness: Endianness? = null,
@@ -73,9 +74,10 @@ data class PluginChecksum(
     fun toSpec(defaultEndianness: Endianness): ChecksumSpec? {
         val algorithm = Checksums.byId(strategy) ?: return null
         val width = (storedWidth ?: algorithm.widthBytes).coerceIn(1, algorithm.widthBytes)
-        val length = if (rangeEnd < 0) null else (rangeEnd - rangeStart).coerceAtLeast(0L)
+        val length = if (rangeLength < 0) null else rangeLength
         val storedRange = storedAt until storedAt + width
-        val exclude = if (rangeStart <= storedAt && (length == null || storedAt < rangeStart + length)) {
+        val insideRange = storedAt >= rangeStart && (length == null || storedAt < rangeStart + length)
+        val exclude = if (insideRange) {
             listOf(storedRange)
         } else {
             emptyList()
@@ -93,7 +95,7 @@ data class PluginChecksum(
     val label: String
         get() = buildString {
             append(strategy)
-            if (rangeStart != 0L || rangeEnd >= 0) append(" over [$rangeStart, $rangeEnd]")
+            if (rangeStart != 0L || rangeLength >= 0) append(" over [$rangeStart, $rangeLength]")
             append(" stored at $storedAt")
         }
 }
@@ -115,6 +117,8 @@ data class FieldMapping(
     val displayName: String? = null,
     val category: String? = null,
     val offset: Int? = null,
+    /** Byte width of a `str` field, and of a `bool` that is not one byte. Required for strings. */
+    val length: Int? = null,
     val pointer: Int? = null,
     val stride: Int? = null,
     val count: Int? = null,
@@ -163,6 +167,13 @@ data class GamePlugin(
     val xorKey: String = "",
     val endianness: Endianness = Endianness.LITTLE,
     val checksum: PluginChecksum? = null,
+    /**
+     * Display names for cryptic keys, applied by path mappings: `{"gld": "Gold"}`.
+     *
+     * The cheap half of a plugin — no offsets, no types, just "this key means this". Savant marks the
+     * result as a guess, because it is somebody's note and not the file's own claim.
+     */
+    val rename: Map<String, String> = emptyMap(),
     val fields: List<FieldMapping> = emptyList(),
     val source: PluginSource = PluginSource.IMPORTED,
     val installedAt: Long = System.currentTimeMillis(),

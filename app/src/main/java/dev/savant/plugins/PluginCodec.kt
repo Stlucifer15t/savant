@@ -48,7 +48,9 @@ object PluginCodec {
 
         val parserId = json.string("parser")?.trim()?.lowercase() ?: PluginParserKind.BINARY.id
         val parser = PluginParserKind.entries.firstOrNull { it.id == parserId }
-        if (parser == null) reasons += "parser '$parserId' is not one of ${PluginParserKind.entries.joinToString { it.id }}"
+        if (parser == null) {
+            reasons += "parser '$parserId' is not one savant implements (${PluginParserKind.entries.joinToString { it.id }})"
+        }
 
         val codecId = json.string("codec")?.trim()?.lowercase().orEmpty().ifEmpty { "none" }
         val xorKey = json.string("xorKey").orEmpty()
@@ -61,7 +63,11 @@ object PluginCodec {
 
         val fields = json.list("fields").mapIndexed { index, item -> decodeField(item, index, parser ?: PluginParserKind.BINARY, reasons) }
         val usable = fields.filterNotNull()
-        if (usable.isEmpty()) reasons += "at least one field is required"
+        val rename = json.obj("rename")?.members?.mapNotNull { (key, value) ->
+            value.asText?.takeIf { it.isNotBlank() }?.let { key to it }
+        }?.toMap() ?: emptyMap()
+        // A plugin that only renames keys is still a plugin: names are half of what makes a save readable.
+        if (usable.isEmpty() && rename.isEmpty()) reasons += "at least one field or rename entry is required"
         val duplicates = usable.groupingBy { it.path }.eachCount().filterValues { it > 1 }.keys
         if (duplicates.isNotEmpty()) reasons += "duplicate field path(s): ${duplicates.joinToString()}"
 
@@ -80,6 +86,7 @@ object PluginCodec {
                 xorKey = xorKey,
                 endianness = Endianness.fromTag(json.string("endianness")),
                 checksum = checksum,
+                rename = rename,
                 fields = usable,
                 source = PluginSource.fromName(json.string("source")),
                 installedAt = json.long("installedAt") ?: System.currentTimeMillis(),
@@ -130,13 +137,16 @@ object PluginCodec {
         if (plugin.notes.isNotBlank()) out = out.with("notes", str(plugin.notes))
         if (plugin.source != PluginSource.IMPORTED) out = out.with("source", str(plugin.source.name))
         plugin.checksum?.let { out = out.with("checksum", encodeChecksum(it)) }
+        if (plugin.rename.isNotEmpty()) {
+            out = out.with("rename", obj(plugin.rename.map { (key, value) -> key to str(value) }))
+        }
         return out
     }
 
     private fun encodeChecksum(checksum: PluginChecksum): Json.Obj {
         val base = obj(
             "strategy" to str(checksum.strategy),
-            "range" to arr(num(checksum.rangeStart), num(checksum.rangeEnd)),
+            "range" to arr(num(checksum.rangeStart), num(checksum.rangeLength)),
             "storedAt" to arr(num(checksum.storedAt), num(checksum.storedWidth ?: 0)),
         )
         var out = base
@@ -163,7 +173,7 @@ object PluginCodec {
         return PluginChecksum(
             strategy = strategy,
             rangeStart = range.getOrNull(0) ?: 0L,
-            rangeEnd = range.getOrNull(1) ?: -1L,
+            rangeLength = range.getOrNull(1) ?: -1L,
             storedAt = offset,
             storedWidth = width,
             endianness = json.string("endianness")?.let { Endianness.fromTag(it) },
@@ -207,7 +217,12 @@ object PluginCodec {
             return null
         }
         val offset = item.int("offset")
+        val length = item.int("length")
         val pointer = item.int("pointer")
+        if (parser == PluginParserKind.BINARY && type == FieldType.STRING.tag && (length == null || length <= 0)) {
+            reasons += "field '$path' is a string and needs a length in bytes"
+            return null
+        }
         if (parser == PluginParserKind.BINARY && offset == null && pointer == null) {
             reasons += "field '$path' needs an offset, or a pointer and stride"
             return null
@@ -226,6 +241,7 @@ object PluginCodec {
             displayName = item.string("name")?.takeIf { it.isNotBlank() },
             category = item.string("category")?.takeIf { it.isNotBlank() },
             offset = offset,
+            length = length,
             pointer = pointer,
             stride = item.int("stride"),
             count = item.int("count"),

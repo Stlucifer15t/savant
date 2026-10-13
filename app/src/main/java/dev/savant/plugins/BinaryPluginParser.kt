@@ -32,6 +32,8 @@ internal data class ResolvedField(
     val type: FieldType,
     val endianness: Endianness,
     val mapping: FieldMapping,
+    /** Bytes this field occupies: the type's width for numbers, the mapping's `length` for text. */
+    val width: Int,
 )
 
 /**
@@ -121,12 +123,21 @@ class BinaryPluginParser(private val plugin: GamePlugin) : SaveParser {
         val out = mutableListOf<ResolvedField>()
         for (mapping in plugin.fields) {
             val type = mapping.fieldType
-            if (type == null || type.sizeBytes == null) {
-                warnings += "field '${mapping.path}' has type '${mapping.type}', which has no fixed width"
+            if (type == null) {
+                warnings += "field '${mapping.path}' has type '${mapping.type}', which savant does not know"
+                continue
+            }
+            val size = when {
+                type.sizeBytes != null -> type.sizeBytes
+                type == FieldType.STRING -> mapping.length ?: 0
+                type == FieldType.BOOL -> mapping.length ?: 1
+                else -> 0
+            }
+            if (size <= 0) {
+                warnings += "field '${mapping.path}' has type '${mapping.type}' and no length, so savant cannot size it"
                 continue
             }
             val endianness = mapping.endianness ?: plugin.endianness
-            val size = type.sizeBytes
             val pointerAt = mapping.pointer
             if (pointerAt != null) {
                 val base = readPointer(payload, mapping, pointerAt, warnings) ?: continue
@@ -141,14 +152,14 @@ class BinaryPluginParser(private val plugin: GamePlugin) : SaveParser {
                 for (index in 0 until count) {
                     val offset = base + mapping.recordOffset + index * stride
                     if (offset < 0 || offset + size > payload.size) break
-                    out += ResolvedField(expandPath(mapping.path, index), offset, type, endianness, mapping)
+                    out += ResolvedField(expandPath(mapping.path, index), offset, type, endianness, mapping, size)
                 }
             } else if (mapping.offset != null) {
                 if (mapping.offset < 0 || mapping.offset + size > payload.size) {
                     warnings += "'${mapping.path}' at ${mapping.offset} does not fit in ${payload.size} bytes"
                     continue
                 }
-                out += ResolvedField(mapping.path, mapping.offset, type, endianness, mapping)
+                out += ResolvedField(mapping.path, mapping.offset, type, endianness, mapping, size)
             } else {
                 warnings += "'${mapping.path}' has neither an offset nor a pointer"
             }
@@ -192,9 +203,50 @@ class BinaryPluginParser(private val plugin: GamePlugin) : SaveParser {
     private fun expandPath(path: String, index: Int): String =
         if (path.contains("[*]")) path.replace("[*]", "[$index]") else "$path[$index]"
 
+    /** Numbers come from [BinaryValues]; text and flags are length based, so they are read here. */
+    private fun valueFor(field: ResolvedField, payload: ByteArray): FieldValue? = when (field.type) {
+        FieldType.STRING -> {
+            val to = (field.offset + field.width).coerceAtMost(payload.size)
+            if (field.offset >= to) null
+            else FieldValue.Text(String(payload, field.offset, to - field.offset, Charsets.UTF_8).trimEnd('\u0000'))
+        }
+
+        FieldType.BOOL -> FieldValue.Bool(BinaryValues.bits(payload, field.offset, field.width, field.endianness) != 0L)
+
+        else -> BinaryValues.read(payload, field.offset, field.type, field.endianness)
+    }
+
+    /** Writes a text field, NUL padded to its own width. Too long is refused, never truncated. */
+    private fun writeText(payload: ByteArray, field: ResolvedField, value: FieldValue): String? {
+        val text = (value as? FieldValue.Text)?.value ?: return "a ${field.type.tag} field needs text"
+        val encoded = text.toByteArray(Charsets.UTF_8)
+        if (encoded.size > field.width) {
+            return "${encoded.size} bytes does not fit in the ${field.width} byte field"
+        }
+        for (i in 0 until field.width) {
+            payload[field.offset + i] = if (i < encoded.size) encoded[i] else 0
+        }
+        return null
+    }
+
+    /** Writes a flag as [width] bytes of zero or one. */
+    private fun writeFlag(payload: ByteArray, field: ResolvedField, value: FieldValue): Boolean {
+        val flag = when (value) {
+            is FieldValue.Bool -> if (value.value) 1L else 0L
+            is FieldValue.Int64 -> value.value
+            else -> return false
+        }
+        if (field.offset < 0 || field.offset + field.width > payload.size) return false
+        for (i in 0 until field.width) {
+            val shift = if (field.endianness == Endianness.BIG) 8 * (field.width - 1 - i) else 8 * i
+            payload[field.offset + i] = ((flag ushr shift) and 0xFF).toByte()
+        }
+        return true
+    }
+
     private fun nodeFor(field: ResolvedField, payload: ByteArray): Node {
         val mapping = field.mapping
-        val value = BinaryValues.read(payload, field.offset, field.type, field.endianness)
+        val value = valueFor(field, payload)
         val key = mapping.path.substringAfterLast('.').removeSuffix("[*]")
         val declared = mapping.declaredCategory
         return Node(
@@ -208,7 +260,7 @@ class BinaryPluginParser(private val plugin: GamePlugin) : SaveParser {
             min = mapping.min ?: field.type.range?.start,
             max = mapping.max ?: field.type.range?.endInclusive,
             byteOffset = field.offset.toLong(),
-            byteLength = field.type.sizeBytes,
+            byteLength = field.width,
             sourceKey = mapping.path,
             fixedWidth = true,
             aiGuess = mapping.displayName?.let { AiGuess(it, 1f, "plugin ${plugin.gameName}") },
@@ -268,9 +320,22 @@ internal class BinaryPluginDocument(
                 rejected += RejectedEdit(edit, validation.reason ?: "invalid value")
                 continue
             }
-            val written = BinaryValues.writeInto(payload, field.offset, edit.newValue, field.type, field.endianness)
-            if (!written) {
-                rejected += RejectedEdit(edit, "offset ${field.offset} is outside the ${payload.size} byte payload")
+            val failure = when (field.type) {
+                FieldType.STRING -> writeText(payload, field, edit.newValue)
+                FieldType.BOOL -> if (writeFlag(payload, field, edit.newValue)) {
+                    null
+                } else {
+                    "that is not a flag value"
+                }
+
+                else -> if (BinaryValues.writeInto(payload, field.offset, edit.newValue, field.type, field.endianness)) {
+                    null
+                } else {
+                    "offset ${field.offset} is outside the ${payload.size} byte payload"
+                }
+            }
+            if (failure != null) {
+                rejected += RejectedEdit(edit, failure)
                 continue
             }
             updated[edit.path] = node.copy(value = edit.newValue)
