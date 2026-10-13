@@ -11,3 +11,7 @@ captures/
 *.aab
 *.keystore
 !debug.keystore
+
+# dev sandbox toolchain + harness output (see tools/jvmcheck)
+tools/jvmcheck/.toolchain/
+tools/jvmcheck/build/

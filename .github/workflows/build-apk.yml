@@ -10,7 +10,7 @@ name: build apk
 on:
   push:
     branches:
-      - "arena/0fa73532-savant"
+      - "arena/5f72e2a6-savant"
       - main
   pull_request:
   workflow_dispatch:
@@ -67,7 +67,7 @@ jobs:
       # bump has something to diff against — and the sandbox cannot download artifacts, so this is
       # how the schema gets back. `[skip ci]` keeps the push from starting another run.
       - name: commit exported room schema
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/arena/0fa73532-savant'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/arena/5f72e2a6-savant'
         run: |
           if [ -d app/schemas ]; then
             git config user.name "savant ci"
@@ -77,7 +77,7 @@ jobs:
               git commit -m "chore: exported room schema [skip ci]"
               # A rejection here means the branch moved while this run was building; the next push
               # carries the schema instead. Not worth failing an otherwise green build over.
-              git push origin HEAD:arena/0fa73532-savant || echo "schema push skipped, branch moved"
+              git push origin HEAD:arena/5f72e2a6-savant || echo "schema push skipped, branch moved"
             fi
           fi
 
@@ -90,7 +90,7 @@ jobs:
           retention-days: 14
 
       - name: publish rolling release
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/arena/0fa73532-savant'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/arena/5f72e2a6-savant'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
