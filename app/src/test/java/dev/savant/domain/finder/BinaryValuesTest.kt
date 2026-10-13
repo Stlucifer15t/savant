@@ -16,16 +16,19 @@ import org.junit.Test
  */
 class BinaryValuesTest {
 
+    /** 0x12345678 stored little endian: the low byte is first on disk. */
     private val little = byteArrayOf(0x78, 0x56, 0x34, 0x12, 0x00, 0x00, 0x00, 0x00)
+
+    /** The same number stored big endian. */
     private val big = byteArrayOf(0x12, 0x34, 0x56, 0x78, 0x00, 0x00, 0x00, 0x00)
 
     @Test
     fun readsIntegersInBothByteOrders() {
         assertEquals(0x12345678L, value(little, 0, FieldType.INT32, Endianness.LITTLE))
         assertEquals(0x12345678L, value(big, 0, FieldType.INT32, Endianness.BIG))
-        // The same four bytes, read the other way round, are a different number.
+        // Read with the wrong byte order, the same four bytes are a different number.
         assertEquals(0x78563412L, value(little, 0, FieldType.UINT32, Endianness.BIG))
-        assertEquals(0x12345678L, value(big, 0, FieldType.UINT32, Endianness.LITTLE))
+        assertEquals(0x78563412L, value(big, 0, FieldType.UINT32, Endianness.LITTLE))
     }
 
     @Test
