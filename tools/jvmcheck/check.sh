@@ -3,7 +3,7 @@
 # Compiles and runs the pure-JVM half of savant, plus its unit tests, without gradle and without an
 # Android SDK. What it covers:
 #
-#   app/src/main/java/dev/savant/{domain,parsers,codecs,ai}   pure kotlin, no android imports
+#   app/src/main/java/dev/savant/{domain,parsers,codecs,plugins,ai}   pure kotlin, no android imports
 #   app/src/main/java/dev/savant/data/history/EntryCodec.kt   the transcript codec, also pure
 #   app/src/test/java/**                                      every unit test
 #
@@ -30,6 +30,7 @@ main_sources() {
   find "$ROOT/app/src/main/java/dev/savant/domain" \
        "$ROOT/app/src/main/java/dev/savant/parsers" \
        "$ROOT/app/src/main/java/dev/savant/codecs" \
+       "$ROOT/app/src/main/java/dev/savant/plugins" \
        "$ROOT/app/src/main/java/dev/savant/ai" -name '*.kt'
   echo "$ROOT/app/src/main/java/dev/savant/data/history/EntryCodec.kt"
   echo "$ROOT/app/src/main/java/dev/savant/data/settings/SavantSettings.kt"
