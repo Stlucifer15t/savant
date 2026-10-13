@@ -89,7 +89,7 @@ data class McpTool(
         fun split(qualified: String): Pair<String, String>? {
             val at = qualified.lastIndexOf(SEPARATOR)
             if (at <= 0 || at + SEPARATOR.length >= qualified.length) return null
-            return qualified.substring(at + SEPARATOR.length) to qualified.substring(0, at)
+            return qualified.substring(0, at) to qualified.substring(at + SEPARATOR.length)
         }
     }
 }

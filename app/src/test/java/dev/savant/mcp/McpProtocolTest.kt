@@ -187,7 +187,8 @@ class McpProtocolTest {
         val clamped = McpProtocol.clamp(long)
         assertTrue(clamped.length < long.length)
         assertTrue(clamped.endsWith("characters]"))
-        assertEquals(long, McpProtocol.clamp(long.take(100)))
+        val short = long.take(100)
+        assertEquals(short, McpProtocol.clamp(short))
     }
 
     @Test
