@@ -11,6 +11,7 @@ import dev.savant.ai.NetworkRecord
 import dev.savant.ai.ProviderKind
 import dev.savant.ai.ProviderPing
 import dev.savant.ai.ProviderProfile
+import dev.savant.ai.ProviderProfiles
 import dev.savant.ai.net.HttpRequest
 import dev.savant.ai.net.HttpTransport
 import dev.savant.ai.net.TransportException
@@ -151,7 +152,7 @@ class HttpLlmClient(
      */
     private fun requireKey(): String? {
         val key = apiKey()?.trim()?.takeIf { it.isNotEmpty() }
-        if (key == null && profile.provider != ProviderKind.CUSTOM) {
+        if (key == null && ProviderProfiles.needsKey(profile)) {
             throw TransportException(
                 "no api key for ${profile.provider.label} — add one in settings → ai provider",
                 retryable = false,

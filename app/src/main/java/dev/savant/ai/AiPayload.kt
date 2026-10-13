@@ -55,7 +55,7 @@ object AiPayload {
             "${node.path}: ${node.type.tag}$value"
         }
         val header = buildString {
-            append("${tree.format.badge} save, ${tree.editableCount} editable values")
+            append("${tree.format.badge.lowercase()} save, ${tree.editableCount} editable values")
             if (tree.truncated) append(", view truncated")
             if (tree.readOnly) append(", read only")
             if (nodes.size < tree.editableCount) append(", showing first ${nodes.size}")

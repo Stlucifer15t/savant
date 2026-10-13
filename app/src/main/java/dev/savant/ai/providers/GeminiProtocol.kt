@@ -218,17 +218,18 @@ object GeminiProtocol : ProviderProtocol {
                 }
             }
             val parts = candidate.obj("content")?.list("parts").orEmpty()
-            var emitted: LlmChunk? = null
+            val pieces = mutableListOf<String>()
             for (part in parts) {
                 val partObj = part as? Json.Obj ?: continue
-                partObj.string("text")?.let { piece -> emitted = delta(piece) ?: emitted }
+                partObj.string("text")?.takeIf { it.isNotEmpty() }?.let { piece -> pieces += piece }
                 partObj.obj("functionCall")?.let { call ->
                     call.string("name")?.let { name ->
                         calls += ToolCall(id = "call_$name", name = name, arguments = scalarMap(call.get("args")))
                     }
                 }
             }
-            return emitted
+            // The reader answers with one chunk per event, so several text parts become one delta.
+            return if (pieces.isEmpty()) null else delta(pieces.joinToString(""))
         }
 
         override fun finish(): LlmResponse = LlmResponse(

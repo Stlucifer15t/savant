@@ -180,7 +180,8 @@ class ProviderAssistantTest {
 
     @Test
     fun fieldValuesStayBehindWhenTheUserTurnsThemOff() {
-        val client = ScriptedClient(listOf(text(listOf("ok"))))
+        // Two answers: the second call below is a fresh turn, and a fresh turn is a fresh request.
+        val client = ScriptedClient(listOf(text(listOf("ok")), text(listOf("ok"))))
         reply(client, assistant = assistant(client, sendFieldValues = false))
         val system = client.requests.first().systemPrompt!!
         assertTrue(system.contains("player.gold: i32"))

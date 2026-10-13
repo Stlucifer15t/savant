@@ -87,8 +87,21 @@ object ProviderProfiles {
     fun label(profile: ProviderProfile): String =
         if (profile.model.isBlank()) profile.provider.label else "${profile.provider.label} · ${profile.model}"
 
-    /** True when this profile cannot work without a key the user has not entered yet. */
-    fun needsKey(profile: ProviderProfile): Boolean = profile.provider != ProviderKind.CUSTOM
+    /**
+     * The url a request would actually go to: what the user typed, or the provider's own host.
+     */
+    fun effectiveBaseUrl(profile: ProviderProfile): String =
+        profile.baseUrl.ifBlank { profile.provider.defaultBaseUrl }
+
+    /**
+     * True when this profile cannot work without a key the user has not entered yet.
+     *
+     * Anything pointed somewhere other than the provider's own host — a local server, a proxy, a
+     * mirror — is allowed to have no key, because a hosted key is not what such an endpoint wants.
+     * Custom profiles never need one; a 401 from the endpoint itself is the honest answer there.
+     */
+    fun needsKey(profile: ProviderProfile): Boolean =
+        profile.provider != ProviderKind.CUSTOM && effectiveBaseUrl(profile) == profile.provider.defaultBaseUrl
 
     /**
      * A profile is usable when it has somewhere to go and something to ask for. OpenRouter and any

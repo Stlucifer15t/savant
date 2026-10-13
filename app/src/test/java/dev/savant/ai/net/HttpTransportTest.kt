@@ -107,9 +107,9 @@ class HttpTransportTest {
             assertTrue(answer.ok)
             val seen = server.received.first()
             assertTrue(seen.startsWith("POST /v1/chat/completions"))
-            assertTrue(seen.contains("bearer sk-test"))
+            assertTrue(seen.contains("authorization: Bearer sk-test"))
             assertTrue(seen.contains("""{"model":"gpt-4o-mini"}"""))
-            assertTrue(seen.contains(UrlConnectionTransport.USER_AGENT.lowercase()))
+            assertTrue(seen.contains("user-agent: ${UrlConnectionTransport.USER_AGENT}"))
         }
     }
 

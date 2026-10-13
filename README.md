@@ -604,7 +604,11 @@ reasonable choices made without asking, so they are written down:
     `BackupStore` — all fixed. because runner logs are served from a host the sandbox cannot reach,
     a failing build pushes its own gradle log to the `ci-logs` branch (`.ci/build.log`), which is
     readable through the ordinary contents api. a failing *test* also pushes the junit xml messages,
-    because gradle's console line is only `AssertionError at File.kt:12`.
+    because gradle's console line is only `AssertionError at File.kt:12`. the stub jUnit in
+    `tools/jvmcheck/junit-stub` mirrors the two things that matter: `@Test` defaults to "no exception
+    expected" (a default of `Throwable` makes every failure look like an expected one, which is how
+    the harness once reported a suite green that ci then failed on) and only a declared `expected =`
+    swallows a throw.
 14. **history stores text, not values.** see [the local database](#the-local-database). the
     alternative — snapshotting the field tree per message — would make a transcript a second copy of
     every save on the phone and would show numbers that no longer match the file.
@@ -635,7 +639,11 @@ reasonable choices made without asking, so they are written down:
     as a proposed `FieldEdit` that goes through the diff preview, `EditValidator` and the export
     verifier exactly like a tap, so "the model can never write a byte" is a property of the code
     rather than a promise in a system prompt.
-22. **the request log is opt-in, in memory, and never the payload.** a log that survives a restart
+22. **a profile pointed somewhere other than the provider's own host may have no key.** ollama,
+    llama.cpp or a proxy speaks the same dialect and wants no authorization header, so a key is
+    required only when the request would go to the provider's own base url. a custom endpoint is
+    never nagged for one — if it does want a key, its own 401 says so, in its own words.
+23. **the request log is opt-in, in memory, and never the payload.** a log that survives a restart
     is a record of what someone was doing with their saves, so it is capped at 60 in-memory records
     and off by default; what it stores is metadata plus a redacted detail line, never a request body.
 

@@ -3,6 +3,7 @@ package dev.savant.jvmcheck
 import org.junit.After
 import org.junit.Before
 import org.junit.Ignore
+import org.junit.None
 import org.junit.Test
 import java.io.File
 import java.lang.reflect.InvocationTargetException
@@ -92,6 +93,7 @@ object TestRunner {
         }
 
         val expected = method.getAnnotation(Test::class.java).expected.java
+        val expectsThrow = expected != None::class.java
         val hooks = type.declaredMethods.filter {
             it.getAnnotation(Before::class.java) != null || it.getAnnotation(After::class.java) != null
         }.sortedBy { it.name }
@@ -103,10 +105,8 @@ object TestRunner {
             method.invoke(instance)
         } catch (wrapped: InvocationTargetException) {
             val cause = wrapped.targetException
-            if (cause.javaClass.isAssignableFrom(expected) || expected.isInstance(cause)) return null
-            if (expected != Throwable::class.java) {
-                return "expected ${expected.name}, got ${describe(cause)}"
-            }
+            // Only a declared `expected =` swallows a throw. Anything else is a failure.
+            if (expectsThrow && expected.isInstance(cause)) return null
             return describe(cause)
         } catch (thrown: Throwable) {
             return describe(thrown)
@@ -115,9 +115,7 @@ object TestRunner {
                 .forEach { runCatching { it.isAccessible = true; it.invoke(instance) } }
         }
 
-        if (expected != Throwable::class.java) {
-            return "expected ${expected.name} to be thrown, nothing was"
-        }
+        if (expectsThrow) return "expected ${expected.name} to be thrown, nothing was"
         return null
     }
 

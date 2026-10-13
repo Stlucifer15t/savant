@@ -89,7 +89,7 @@ class ProviderAssistant(
                 payloadNote = note,
             )
             val response = try {
-                roundTrip(request, input)
+                askTheProvider(request, input)
             } catch (failure: TransportException) {
                 val lines = listOf(failure.message ?: "the provider request did not complete") + hintFor(failure)
                 // A later round can fail after the model already proposed something: keep the
@@ -161,14 +161,19 @@ class ProviderAssistant(
      * Providers that cannot stream still satisfy this — they emit the whole answer as one delta —
      * so the loop above has a single shape whatever is answering.
      */
-    private suspend fun roundTrip(request: LlmRequest, input: AssistantInput): LlmResponse {
+    private suspend fun askTheProvider(request: LlmRequest, input: AssistantInput): LlmResponse {
+        val watching = input.onPartial
+        if (watching == null || !profile.streaming) {
+            // Nobody to show a half written answer to: one request, one answer.
+            return client.complete(request)
+        }
         var completed: LlmResponse? = null
         val streamed = StringBuilder()
         client.events(request).collect { event ->
             when (event) {
                 is LlmEvent.Delta -> {
                     streamed.append(event.chunk.textDelta)
-                    input.onPartial(streamed.toString())
+                    watching(streamed.toString())
                 }
 
                 is LlmEvent.Completed -> completed = event.response

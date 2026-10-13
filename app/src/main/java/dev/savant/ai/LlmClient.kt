@@ -46,7 +46,6 @@ data class LlmRequest(
     val systemPrompt: String? = null,
     val temperature: Float = 0.2f,
     val maxOutputTokens: Int = 1024,
-    val stream: Boolean = false,
     /**
      * What the caller put in this request, for the request log and for the privacy copy.
      * It is a note *about* the request, never sent to a provider.

@@ -13,7 +13,7 @@ import kotlin.reflect.KClass
  */
 @Target(AnnotationTarget.FUNCTION)
 @Retention(AnnotationRetention.RUNTIME)
-annotation class Test(val expected: KClass<out Throwable> = Throwable::class)
+annotation class Test(val expected: KClass<out Throwable> = None::class)
 
 @Target(AnnotationTarget.FUNCTION)
 @Retention(AnnotationRetention.RUNTIME)
@@ -26,6 +26,15 @@ annotation class After
 @Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION)
 @Retention(AnnotationRetention.RUNTIME)
 annotation class Ignore(val value: String = "")
+
+/**
+ * Stand-in for `org.junit.Test.None`: "no exception is expected".
+ *
+ * [Test.expected] defaults to this rather than to `Throwable::class`, because a default of
+ * `Throwable` makes every failure look like an expected exception — which is exactly how this
+ * harness once reported a suite green while the same tests failed in CI.
+ */
+class None : Throwable()
 
 /** JUnit's richer assertion error: shows both sides of a failed equality. */
 class ComparisonFailure(

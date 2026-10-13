@@ -30,10 +30,11 @@ data class AssistantInput(
     val session: EditorSession?,
     val history: List<LlmMessage> = emptyList(),
     /**
-     * Called with the answer so far while a remote provider streams it. The local parser never
-     * calls it; the chat only uses it to show the reply arriving instead of a frozen screen.
+     * Called with the answer so far while a remote provider streams it, or null when nobody is
+     * watching. Null is the default on purpose: a caller that will not render partial text has no
+     * reason to pay for server-sent events, and the provider engine sends a plain request instead.
      */
-    val onPartial: (String) -> Unit = {},
+    val onPartial: ((String) -> Unit)? = null,
 )
 
 sealed interface AssistantReply {

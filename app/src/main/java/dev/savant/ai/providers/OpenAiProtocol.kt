@@ -39,10 +39,15 @@ object OpenAiProtocol : ProviderProtocol {
     }
 
     override fun body(profile: ProviderProfile, request: LlmRequest, streaming: Boolean): String {
-        val messages = request.messages.map { message -> messageJson(message) }
+        val turns = buildList {
+            request.systemPrompt?.takeIf { it.isNotBlank() }?.let { system ->
+                add(LlmMessage(role = LlmMessage.Role.SYSTEM, text = system))
+            }
+            addAll(request.messages)
+        }
         val payload = buildList<Pair<String, Json>> {
             add("model" to str(profile.model))
-            addAll(messages)
+            add("messages" to arr(turns.map { message -> messageJson(message) }))
             if (request.tools.isNotEmpty()) {
                 add("tools" to arr(request.tools.map { toolJson(it) }))
                 add("tool_choice" to str("auto"))
@@ -89,10 +94,10 @@ object OpenAiProtocol : ProviderProtocol {
 
     // ---- request shape ---------------------------------------------------------------
 
-    private fun messageJson(message: LlmMessage): Pair<String, Json> = when (message.role) {
-        LlmMessage.Role.SYSTEM -> "messages" to obj("role" to str("system"), "content" to str(message.text))
+    private fun messageJson(message: LlmMessage): Json = when (message.role) {
+        LlmMessage.Role.SYSTEM -> obj("role" to str("system"), "content" to str(message.text))
 
-        LlmMessage.Role.USER -> "messages" to obj("role" to str("user"), "content" to str(message.text))
+        LlmMessage.Role.USER -> obj("role" to str("user"), "content" to str(message.text))
 
         LlmMessage.Role.ASSISTANT -> {
             val members = mutableListOf<Pair<String, Json>>("role" to str("assistant"))
@@ -110,10 +115,10 @@ object OpenAiProtocol : ProviderProtocol {
                     )
                 })
             }
-            "messages" to obj(members)
+            obj(members)
         }
 
-        LlmMessage.Role.TOOL -> "messages" to obj(
+        LlmMessage.Role.TOOL -> obj(
             "role" to str("tool"),
             "tool_call_id" to str(message.toolCallId ?: ""),
             "content" to str(message.text),
