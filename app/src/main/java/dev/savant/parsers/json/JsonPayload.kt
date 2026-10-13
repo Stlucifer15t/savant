@@ -35,7 +35,7 @@ sealed interface Json {
 
     /** Ordered members; duplicate keys survive a round trip, first one wins on lookup. */
     data class Obj(val members: List<Pair<String, Json>> = emptyList()) : Json {
-        operator fun get(key: String): Json? = members.firstOrNull { it.first == key }?.second
+        override operator fun get(key: String): Json? = members.firstOrNull { it.first == key }?.second
         fun with(key: String, value: Json): Obj {
             val index = members.indexOfFirst { it.first == key }
             return if (index < 0) Obj(members + (key to value))
@@ -44,6 +44,9 @@ sealed interface Json {
     }
 
     // ---- accessors, so callers never write a cast -------------------------------
+
+    /** Child by key; null for anything that is not an object. */
+    operator fun get(key: String): Json? = child(key)
 
     fun string(key: String): String? = (child(key) as? Str)?.value
     fun stringOrNull(key: String): String? = string(key)

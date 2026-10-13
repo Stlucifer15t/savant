@@ -99,13 +99,15 @@ class EntryCodecTest {
             atMillis = 1_700_000_000_001,
         )
 
-        val back = EntryCodec.decode(EntryCodec.encode(entry, sessionId, 0)) as FileEntry
+        val stored = EntryCodec.encode(entry, sessionId, 0)
+        val back = EntryCodec.decode(stored) as FileEntry
 
         assertEquals(entry.file, back.file)
         assertEquals(entry.formatBadge, back.formatBadge)
         assertEquals(0.92f, back.confidence?.score ?: 0f, 0.0001f)
         assertEquals("looks like json", back.confidence?.reason)
-        assertTrue(back.body.contains("save.json"))
+        assertTrue(stored.body.contains("save.json"))
+        assertTrue(stored.body.contains("json"))
     }
 
     @Test
@@ -120,11 +122,12 @@ class EntryCodecTest {
             done = true,
         )
 
-        val back = EntryCodec.decode(EntryCodec.encode(entry, sessionId, 2)) as ParseEntry
+        val stored = EntryCodec.encode(entry, sessionId, 2)
+        val back = EntryCodec.decode(stored) as ParseEntry
 
         assertEquals(entry.log.map { it.text }, back.log.map { it.text })
         assertTrue(back.done)
-        assertTrue(back.body.contains("indexed 42 values"))
+        assertTrue(stored.body.contains("indexed 42 values"))
     }
 
     @Test
@@ -270,6 +273,7 @@ class EntryCodecTest {
         assertEquals(0, back.artifact.bytes.size)
         // The verdict survives; the file does not. That is the whole point of the restored flag.
         assertTrue(back.artifact.report.ok)
+        assertTrue(back.artifact.usable)
         assertTrue(stored.body.contains("verified"))
     }
 
