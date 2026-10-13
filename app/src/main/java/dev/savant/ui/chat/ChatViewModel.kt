@@ -129,6 +129,9 @@ class ChatViewModel @Inject constructor(
                     it.copy(
                         reducedMotion = prefs.reducedMotion,
                         showWarning = !prefs.warningAccepted,
+                        // Every profile change mirrors into settings, so this is also the signal that
+                        // the engine on the other end of the interface changed.
+                        engineLabel = assistant.label,
                     )
                 }
             }
