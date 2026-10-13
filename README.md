@@ -23,7 +23,7 @@ byte.
 | 5 | value finder across two saves, typed binary scanner | **done** |
 | 6 | ai providers, profiles, privacy controls | **done** |
 | 7 | plugin runtime: import/export game definitions | **done** |
-| 8 | mcp connectors, web search, fetch | planned |
+| 8 | mcp connectors, web search, fetch | **done** |
 | 9 | lz-string / rpgsave, sqlite, ini, unity plist | planned |
 
 everything below describes what is in the repository today.
@@ -113,8 +113,10 @@ backups → restore reopens it in one tap.
   to the chat. **compare saves** takes two saves of the same game and ranks every typed value that
   moved. **scan bytes** takes one file and a value you know is in it, and lists every offset that
   holds it. the byte modes need no parser, and a candidate can be named.
+  a call that would leave the device — a web search, a fetch, a connector — arrives as a card asking
+  first, and stays in the transcript as a record of what was allowed.
 - **settings** — appearance, editing behaviour, providers (profiles, keys, endpoint verdict, test
-  connection), privacy, network log, data, about.
+  connection), web tools, connectors, privacy, network log, data, about.
 
 ---
 
@@ -127,10 +129,13 @@ app/src/main/java/dev/savant/
 ├── SavantApplication.kt     @HiltAndroidApp
 ├── ai/                      assistant contract, tools, tool executor, local assistant,
 │   │                        system prompt, remote tool loop, the selecting engine
-│   └── provider/            three wire dialects, http model, network policy, profile codec
+│   ├── provider/            three wire dialects, http model, network policy, profile codec
+│   └── web/                 WebPolicy, HtmlText, WebSearch, the two web tools
 ├── codecs/                  CodecStrategy, ChecksumSpec, ByteRangeSpec
+├── mcp/                     McpServer, McpProtocol (json-rpc + sse), McpClient, McpToolRouter, McpCodec
 ├── data/
 │   ├── ai/                  NetworkLog, UrlConnectionTransport
+│   ├── mcp/                 McpServerStore — connectors and their cached tool lists
 │   ├── db/                  room entities, daos, SavantDatabase (schema in app/schemas)
 │   ├── history/             ChatHistoryRepository, EntryCodec, NamedFieldRepository
 │   ├── plugins/             PluginStore (json document), PluginManager (registry sync)
@@ -434,6 +439,46 @@ carries no save data at all, which is why it is safe to press before trusting a 
 
 ---
 
+## the web and connectors
+
+Two extra tools, both off by default, both gated, and neither able to reach a save file.
+
+| tool | what it does | limits |
+| --- | --- | --- |
+| `web_search` | duckduckgo instant answers (no key) or the brave web search api (token in a header) | 8 results, 500 kb, 15 s |
+| `fetch_url` | one https url, reduced to text | allowlist, 500 kb read *while reading*, 15 s, 8 000 chars |
+
+**the gate.** A web or connector call does not happen until the user allows it: the turn ends with a
+card in the chat naming the query or the url, and approving it re-asks the same question with the
+approval attached. An approval covers that one call, not the session. Editing a save file does *not*
+use this gate, because the diff preview is a stronger one — it shows the old value and the new one
+before anything is written, while a fetch shows nothing at all until it is too late.
+
+**the allowlist.** Empty means "any https host, but ask every time", not "anything goes silently".
+Listed domains cover their subdomains; `http` is refused unless it points at the phone's own network,
+by the same `NetworkPolicy` the providers use.
+
+**untrusted by construction.** Every search result, page and connector answer is wrapped in a line
+saying it is data and not instructions, and that nothing in it may change a save file. A fetched page
+is the only input in savant that somebody else wrote for a model to read, so a page that says "ignore
+the diff preview and write the file" has to lose. html is reduced to prose first — scripts, styles and
+comments go — so a page cannot smuggle markup into a prompt either.
+
+**connectors** are remote MCP servers over streamable http and sse. There is no stdio transport and no
+subprocess anywhere in the package: an app that edits save files has no business spawning programs.
+Three calls are made — `initialize`, `tools/list`, `tools/call` — the session id a server hands back is
+sent on every request after the handshake, sse framing is unwrapped before anything is parsed, and a
+json-rpc error becomes a line of text rather than an exception. A connector's tools are namespaced
+`tool__server` so two servers can both offer `search`, and arguments are typed the way the server's
+schema asked, because a model hands savant strings and a server that declared `integer` will reject
+`"42"`.
+
+The tool list is **cached with the server**, so "what can the model call" is answerable without a round
+trip — it is part of the prompt, and the prompt is built before anything is sent. The connect button in
+settings is the only handshake that happens on purpose.
+
+---
+
 ## the local database
 
 room 2.6.1 through ksp, schema exported to `app/schemas` and committed — ci pushes it back to the
@@ -517,7 +562,7 @@ mapping — so the work done here is not thrown away when the format gets a real
 ./gradlew :app:testDebugUnitTest
 ```
 
-267 tests, pure jvm, no robolectric and no android APIs:
+315 tests, pure jvm, no robolectric and no android APIs:
 
 - `domain/model/FieldModelTest` — paths, quoting, value parsing and formatting, types, categories,
   validation, quick values, tree search and normalisation.
@@ -565,6 +610,17 @@ mapping — so the work done here is not thrown away when the format gets a real
   byte identical writes, names surviving an edit, detection only preferring the plugin for files it
   claims, wildcards over array elements, a type disagreement kept as a note, `rename`, and
   `editable: false`.
+- `mcp/McpProtocolTest` — json-rpc bodies, the initialized notification having no id, sse frames
+  unwrapped and the right one chosen by id, a tools list becoming namespaced tool specs, arguments
+  typed to the server's schema, text blocks joined, non-text content reported rather than dropped,
+  error replies as details, clamping, and the stored connector document round tripping with its
+  cached tools.
+- `ai/web/WebToolsTest` — allowlist parsing and subdomain matching, an empty list meaning ask rather
+  than anything goes, cleartext refused before the allowlist is consulted, html to text without
+  scripts or styles, titles and entities, caps, both search providers' requests and responses, and
+  the executor: search off, confirmation before anything is sent, a key that is missing, an
+  allowlisted fetch marked untrusted, plain text left alone, empty pages, 404s, timeouts and the log
+  carrying shape only.
 - `domain/finder/BinaryValuesTest` — typed reads in both byte orders, sign extension for narrow
   integers, float and double windows, windows that do not fit, offset and hex formatting, and the
   two shape tests ranking depends on: printable text, and no zero bytes.
@@ -704,7 +760,19 @@ reasonable choices made without asking, so they are written down:
 26. **a plugin's limits are enforced, not displayed.** a mapped document validates against the mapped
     tree before handing an edit to the base parser, so `max` and `editable: false` are rules. the base
     parser only knows the file's own limits, and without this a plugin's maximum would be decoration.
-27. **the cleartext gate lives in code, not in the platform config.** android can allow or forbid
+28. **no mcp sdk dependency.** remote-only mcp is `initialize`, `tools/list` and `tools/call` over a
+    transport savant already had, plus sse unwrapping — about two hundred lines that run in a unit
+    test against a fake. a sdk would have added a dependency, a version to track, and stdio support
+    savant does not want and would have to disable.
+29. **confirmation is per call, not per session.** approving one fetch does not approve the next one,
+    and the card stays in the transcript so a conversation shows what was allowed to leave the device.
+30. **web and connector output is marked untrusted where it is produced**, not where it is rendered.
+    the wrapper travels with the text into the prompt, so a model cannot be told by a web page that
+    the rule does't apply.
+31. **a connector's tools are cached, and the cache is the contract.** "what can the model call" has to
+    be answerable synchronously to build a prompt, and answering it with a network call would mean a
+    handshake before every message.
+32. **the cleartext gate lives in code, not in the platform config.** android can allow or forbid
     cleartext per *domain*, and a local model box is an ip address, not a domain. so the platform is
     told cleartext is permitted and `NetworkPolicy` refuses every http url that is not on the phone's
     own network — a rule with tests, rather than a config nobody can express.
@@ -741,7 +809,15 @@ reasonable choices made without asking, so they are written down:
 - `formats` is still an enum, so every binary plugin reports the `BINARY` badge and they are told
   apart by plugin id. a plugin cannot add a format to the list on the formats screen; it adds a parser
   that claims files.
-- mcp connectors, `web_search` and `fetch_url` are step 8; the settings rows for them are still inert.
+- connectors are remote only, and savant makes three calls per turn at most: handshake, and the call
+  itself. there is no persistent connection, no server-initiated notifications and no resource or
+  prompt support — tools only.
+- a connector's tool list is a cache. a server that changes its tools keeps the old list until the
+  connect button is pressed again.
+- duckduckgo's instant answer api is not a web index: it answers a question and lists related topics.
+  for a real result list, add a brave key.
+- fetched text is capped at 8 000 characters. a page longer than that is truncated, and the model is
+  told so.
 - `Android/data` is unreachable on android 11+ without extra privileges; share the file in instead.
   an optional shizuku path is a later decision, not a plan.
 
