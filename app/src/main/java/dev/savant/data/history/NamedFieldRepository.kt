@@ -3,6 +3,7 @@ package dev.savant.data.history
 import dev.savant.data.db.NamedFieldDao
 import dev.savant.data.db.NamedFieldRow
 import dev.savant.di.IoDispatcher
+import dev.savant.domain.finder.Candidate
 import dev.savant.domain.model.Node
 import dev.savant.domain.model.SaveFormat
 import kotlinx.coroutines.CoroutineDispatcher
@@ -57,6 +58,37 @@ class NamedFieldRepository @Inject constructor(
             confidence = confidence,
             explanation = explanation,
             source = source.name,
+            savedAt = System.currentTimeMillis(),
+        )
+        return withContext(io) {
+            dao.upsert(row)
+            row
+        }
+    }
+
+    /**
+     * Stores a name for a byte offset the finder ranked.
+     *
+     * This is the finder's only output: nothing was written to any file. The row keeps the offset,
+     * the type and the byte order, which is exactly what a plugin field mapping needs, so step 7 can
+     * export these instead of asking the user to type offsets again.
+     */
+    suspend fun rememberCandidate(
+        candidate: Candidate,
+        displayName: String,
+        fileName: String?,
+    ): NamedFieldRow? {
+        val name = displayName.trim()
+        if (name.isEmpty()) return null
+        val row = NamedFieldRow(
+            id = "${SaveFormat.BINARY.name}|${fileName ?: "?"}|${candidate.key}",
+            format = SaveFormat.BINARY.name,
+            path = candidate.offsetLabel,
+            nameKey = candidate.key,
+            displayName = name,
+            confidence = candidate.confidence,
+            explanation = candidate.reasons.joinToString(" · "),
+            source = NameSource.FINDER.name,
             savedAt = System.currentTimeMillis(),
         )
         return withContext(io) {

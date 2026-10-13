@@ -1,5 +1,7 @@
 package dev.savant.ui.finder
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +24,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,9 +59,17 @@ import dev.savant.ui.theme.SavantTypography
 /**
  * The finder screen.
  *
- * Type a name, a value, `category:stats` or `type:f32` and every match in the open save is listed
- * with its path, type and current value. Expanding a row shows the full picture and offers to hand
- * the field to the chat, which is where an edit gets its diff preview.
+ * Three modes, one bar to switch between them:
+ *
+ * - **open file** — type a name, a value, `category:stats` or `type:f32` and every match in the open
+ *   save is listed with its path, type and current value. Expanding a row shows the full record and
+ *   offers to hand the field to the chat, which is where an edit gets its diff preview.
+ * - **compare saves** — two saves of the same game, before and after a change. Only the bytes that
+ *   differ are interpreted, and every candidate says why it ranks where it does.
+ * - **scan bytes** — one file and a value you know is in it: every offset that holds it.
+ *
+ * The byte modes need no parser, which is the point: they are how savant reaches a format it cannot
+ * read yet, and naming a candidate is what later becomes a plugin mapping.
  */
 @Composable
 fun FinderScreen(
@@ -65,18 +78,37 @@ fun FinderScreen(
     viewModel: FinderViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val colors = Savant.colors
+    val pickSlot = remember { mutableStateOf<ScanSlot?>(null) }
+    val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val slot = pickSlot.value
+        pickSlot.value = null
+        if (uri != null && slot != null) viewModel.onPickFile(slot, uri)
+    }
 
     Column(modifier = modifier.fillMaxSize()) {
         ScreenTopBar(
             title = "finder",
-            subtitle = when {
-                !state.hasSession -> "no file open"
-                else -> "${state.editableCount} editable of ${state.totalCount} nodes" +
-                    if (state.readOnly) " · read only" else ""
+            subtitle = when (state.mode) {
+                FinderMode.OPEN_FILE -> when {
+                    !state.hasSession -> "no file open"
+                    else -> "${state.editableCount} editable of ${state.totalCount} nodes" +
+                        if (state.readOnly) " · read only" else ""
+                }
+
+                FinderMode.COMPARE -> when {
+                    state.working -> "comparing"
+                    state.candidates.isNotEmpty() -> "${state.candidates.size} candidate(s) ranked"
+                    else -> "two saves, one change"
+                }
+
+                FinderMode.SCAN -> when {
+                    state.working -> "scanning"
+                    state.candidates.isNotEmpty() -> "${state.candidates.size} offset(s)"
+                    else -> "one file, one known value"
+                }
             },
             actions = {
-                if (state.query.isNotBlank()) {
+                if (state.mode == FinderMode.OPEN_FILE && state.query.isNotBlank()) {
                     FlatIconButton(
                         icon = SavantIcons.close,
                         contentDescription = "clear search",
@@ -86,55 +118,26 @@ fun FinderScreen(
             },
         )
 
-        SearchField(
-            value = state.query,
-            onValueChange = viewModel::onQueryChanged,
-            searching = state.searching,
-        )
-
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = SavantDimens.gutter, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            items(FieldCategory.entries.toList(), key = { it.name }) { category ->
-                GhostButton(
-                    text = category.label,
-                    onClick = { viewModel.onFilter(category) },
-                )
-            }
-        }
+        FinderModeBar(mode = state.mode, onMode = viewModel::onMode)
         Hairline()
 
-        if (!state.hasSession) {
-            EmptyFinder(text = "attach a save file in chat, then search it here")
-            return@Column
-        }
-        if (state.query.isBlank()) {
-            EmptyFinder(text = "search by name, path or value — try \"gold\", \"hp\", \"category:flags\"")
-            return@Column
-        }
-        if (state.results.isEmpty() && !state.searching) {
-            EmptyFinder(text = "no field matches \"${state.query}\"")
-            return@Column
-        }
-
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(vertical = 4.dp),
-        ) {
-            items(state.results, key = { it.path }) { node ->
-                ResultRow(
-                    node = node,
-                    expanded = state.expandedPath == node.path,
-                    readOnly = state.readOnly,
-                    onToggle = { viewModel.onToggle(node.path) },
-                    onSendToChat = {
-                        viewModel.onSendToChat(node)
-                        onOpenChat()
-                    },
-                )
-                Hairline(color = colors.border.copy(alpha = 0.5f))
-            }
+        if (state.mode == FinderMode.OPEN_FILE) {
+            OpenFileSearch(
+                state = state,
+                viewModel = viewModel,
+                onOpenChat = onOpenChat,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            ScanPanel(
+                state = state,
+                viewModel = viewModel,
+                onPickFile = { slot ->
+                    pickSlot.value = slot
+                    pickFile.launch(arrayOf("*/*"))
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
         }
     }
 }
@@ -272,5 +275,68 @@ private fun EmptyFinder(text: String) {
             }
         }
         Tag(text = "one file at a time", color = Savant.colors.textFaint)
+    }
+}
+
+/** The step 3 finder: search the parsed field tree of the open save. */
+@Composable
+private fun OpenFileSearch(
+    state: FinderUiState,
+    viewModel: FinderViewModel,
+    onOpenChat: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = Savant.colors
+    Column(modifier = modifier.fillMaxSize()) {
+        SearchField(
+            value = state.query,
+            onValueChange = viewModel::onQueryChanged,
+            searching = state.searching,
+        )
+
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = SavantDimens.gutter, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(FieldCategory.entries.toList(), key = { it.name }) { category ->
+                GhostButton(
+                    text = category.label,
+                    onClick = { viewModel.onFilter(category) },
+                )
+            }
+        }
+        Hairline()
+
+        if (!state.hasSession) {
+            EmptyFinder(text = "attach a save file in chat, then search it here")
+            return@OpenFileSearch
+        }
+        if (state.query.isBlank()) {
+            EmptyFinder(text = "search by name, path or value — try \"gold\", \"hp\", \"category:flags\"")
+            return@OpenFileSearch
+        }
+        if (state.results.isEmpty() && !state.searching) {
+            EmptyFinder(text = "no field matches \"${state.query}\"")
+            return@OpenFileSearch
+        }
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(vertical = 4.dp),
+        ) {
+            items(state.results, key = { it.path }) { node ->
+                ResultRow(
+                    node = node,
+                    expanded = state.expandedPath == node.path,
+                    readOnly = state.readOnly,
+                    onToggle = { viewModel.onToggle(node.path) },
+                    onSendToChat = {
+                        viewModel.onSendToChat(node)
+                        onOpenChat()
+                    },
+                )
+                Hairline(color = colors.border.copy(alpha = 0.5f))
+            }
+        }
     }
 }
