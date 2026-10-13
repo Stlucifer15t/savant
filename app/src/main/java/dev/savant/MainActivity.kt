@@ -61,7 +61,7 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIncoming(intent: Intent?) {
         if (intent?.action != Intent.ACTION_SEND) return
-        val uri: Uri? = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+        val uri: Uri = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
             ?: intent.clipData?.getItemAt(0)?.uri
             ?: return
         // Best effort: a share from a file manager usually grants read permission for the session.
