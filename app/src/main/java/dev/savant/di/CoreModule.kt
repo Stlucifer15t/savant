@@ -1,6 +1,5 @@
 package dev.savant.di
 
-import dagger.Binds
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -8,8 +7,6 @@ import dagger.hilt.components.SingletonComponent
 import dev.savant.ai.AssistantEngine
 import dev.savant.ai.LocalAssistant
 import dev.savant.ai.ToolExecutor
-import dev.savant.data.storage.BackupStore
-import dev.savant.data.storage.FileBackupStore
 import dev.savant.domain.parser.ExportVerifier
 import dev.savant.domain.parser.ParserRegistry
 import dev.savant.domain.session.SaveEditor
@@ -71,19 +68,4 @@ object CoreModule {
     @Provides
     @Singleton
     fun assistantEngine(executor: ToolExecutor): AssistantEngine = LocalAssistant(executor)
-}
-
-/**
- * Interface bindings.
- *
- * The UI depends on [BackupStore], not on the file layout behind it: step 4 swaps in a Room backed
- * implementation by changing this one line, and no screen has to know.
- */
-@Module
-@InstallIn(SingletonComponent::class)
-abstract class StorageModule {
-
-    @Binds
-    @Singleton
-    abstract fun bindBackupStore(store: FileBackupStore): BackupStore
 }

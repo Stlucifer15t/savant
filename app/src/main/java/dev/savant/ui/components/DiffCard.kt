@@ -16,8 +16,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.savant.domain.model.FieldEdit
-import dev.savant.ui.chat.model.DiffEntry
-import dev.savant.ui.chat.model.DiffStatus
+import dev.savant.domain.chat.DiffEntry
+import dev.savant.domain.chat.DiffStatus
 import dev.savant.ui.icons.SavantIcon
 import dev.savant.ui.icons.SavantIcons
 import dev.savant.ui.theme.Savant

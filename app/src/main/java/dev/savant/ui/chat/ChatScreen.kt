@@ -10,6 +10,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,11 +43,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -60,15 +64,15 @@ import dev.savant.R
 import dev.savant.domain.model.EditValidator
 import dev.savant.domain.model.FieldCategory
 import dev.savant.domain.model.Node
-import dev.savant.ui.chat.model.ChatEntry
-import dev.savant.ui.chat.model.ChatRole
-import dev.savant.ui.chat.model.DiffEntry
-import dev.savant.ui.chat.model.ExportEntry
-import dev.savant.ui.chat.model.FieldsEntry
-import dev.savant.ui.chat.model.FileEntry
-import dev.savant.ui.chat.model.NoticeEntry
-import dev.savant.ui.chat.model.ParseEntry
-import dev.savant.ui.chat.model.TextEntry
+import dev.savant.domain.chat.ChatEntry
+import dev.savant.domain.chat.ChatRole
+import dev.savant.domain.chat.DiffEntry
+import dev.savant.domain.chat.ExportEntry
+import dev.savant.domain.chat.FieldsEntry
+import dev.savant.domain.chat.FileEntry
+import dev.savant.domain.chat.NoticeEntry
+import dev.savant.domain.chat.ParseEntry
+import dev.savant.domain.chat.TextEntry
 import dev.savant.ui.components.AccentButton
 import dev.savant.ui.components.AssistantText
 import dev.savant.ui.components.DiffCard
@@ -77,6 +81,7 @@ import dev.savant.ui.components.ExportCard
 import dev.savant.ui.components.FieldGroupCard
 import dev.savant.ui.components.FileChip
 import dev.savant.ui.components.FlatIconButton
+import dev.savant.ui.components.GhostButton
 import dev.savant.ui.components.Hairline
 import dev.savant.ui.components.NoticeCard
 import dev.savant.ui.components.ParseProgress
@@ -105,6 +110,7 @@ fun ChatScreen(
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
     val listState = rememberLazyListState()
+    var renaming by remember { mutableStateOf<Node?>(null) }
 
     val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -190,6 +196,16 @@ fun ChatScreen(
                         )
                     }
                 }
+                if (state.historyNote != null) {
+                    item(key = "history-note") {
+                        Text(
+                            text = state.historyNote + " · reopened for reading, attach the file to edit",
+                            style = SavantMono.path,
+                            color = Savant.colors.textFaint,
+                            modifier = Modifier.padding(horizontal = SavantDimens.gutter, vertical = 6.dp),
+                        )
+                    }
+                }
                 items(state.entries, key = { it.id }, contentType = { it::class.simpleName }) { entry ->
                     EntryRow(
                         entry = entry,
@@ -203,6 +219,7 @@ fun ChatScreen(
                         },
                         onCancelDiff = viewModel::onCancelDiff,
                         onRevertRow = viewModel::onRevertRow,
+                        onRename = { node -> renaming = node },
                         onShare = {
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                             viewModel.onShareExport()
@@ -216,6 +233,18 @@ fun ChatScreen(
             if (state.busy) {
                 BusyBar(Modifier.align(Alignment.TopCenter))
             }
+        }
+
+        renaming?.let { node ->
+            RenamePanel(
+                node = node,
+                current = state.savedNames[node.path] ?: node.displayName,
+                onCancel = { renaming = null },
+                onSave = { name ->
+                    viewModel.onRenameField(node, name)
+                    renaming = null
+                },
+            )
         }
 
         ChatInputBar(
@@ -243,6 +272,7 @@ private fun EntryRow(
     onConfirmDiff: (String) -> Unit,
     onCancelDiff: (String) -> Unit,
     onRevertRow: (String, String) -> Unit,
+    onRename: (Node) -> Unit,
     onShare: () -> Unit,
     onSave: () -> Unit,
 ) {
@@ -266,10 +296,21 @@ private fun EntryRow(
         ) {
             Text(text = entry.headline, style = SavantTypography.titleSmall, color = Savant.colors.text)
             Text(
-                text = "${entry.totalCount} nodes indexed · tap a value to edit it",
+                text = if (entry.restored) {
+                    entry.summaryLines.joinToString(" · ").ifBlank { "${entry.totalCount} nodes indexed" }
+                } else {
+                    "${entry.totalCount} nodes indexed · tap a value to edit it"
+                },
                 style = SavantMono.path,
                 color = Savant.colors.textMuted,
             )
+            if (entry.restored) {
+                Text(
+                    text = "from history — reopen the file to browse and edit its values",
+                    style = SavantMono.path,
+                    color = Savant.colors.textFaint,
+                )
+            }
             entry.groups.forEach { group ->
                 FieldGroupCard(
                     group = group,
@@ -279,6 +320,8 @@ private fun EntryRow(
                     onQuick = onQuick,
                     changedPaths = state.changedPaths,
                     readOnly = state.readOnly,
+                    savedNames = state.savedNames,
+                    onRename = onRename,
                 )
             }
         }
@@ -298,6 +341,7 @@ private fun EntryRow(
             onShare = onShare,
             onSave = onSave,
             busy = state.busy,
+            restored = entry.restored,
         )
 
         is NoticeEntry -> NoticeCard(title = entry.title, lines = entry.lines)
@@ -445,4 +489,52 @@ private fun FirstRunWarning(onDismiss: () -> Unit) {
             }
         },
     )
+}
+
+/**
+ * Long press a field name and this appears above the input bar.
+ *
+ * Flat, one line, no dialog: renaming a key is part of reading the file, not a modal interruption.
+ */
+@Composable
+private fun RenamePanel(node: Node, current: String, onCancel: () -> Unit, onSave: (String) -> Unit) {
+    val colors = Savant.colors
+    var draft by remember(node.path) { mutableStateOf(current) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(colors.surface)
+            .padding(horizontal = SavantDimens.gutter, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Hairline(color = colors.border, modifier = Modifier.padding(bottom = 2.dp))
+        Text(
+            text = "name this field · ${node.path}",
+            style = SavantMono.path,
+            color = colors.textMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        BasicTextField(
+            value = draft,
+            onValueChange = { draft = it },
+            singleLine = true,
+            textStyle = SavantTypography.bodyMedium.copy(color = colors.text),
+            cursorBrush = SolidColor(colors.accent),
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(colors.background, RoundedCornerShape(SavantDimens.radius))
+                .border(SavantDimens.hairline, colors.borderStrong, RoundedCornerShape(SavantDimens.radius))
+                .padding(horizontal = 10.dp, vertical = 9.dp),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GhostButton(text = "cancel", onClick = onCancel)
+            Spacer(Modifier.weight(1f))
+            AccentButton(
+                text = "save name",
+                onClick = { onSave(draft) },
+                enabled = draft.trim().isNotEmpty(),
+            )
+        }
+    }
 }

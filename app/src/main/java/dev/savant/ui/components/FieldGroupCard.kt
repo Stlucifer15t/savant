@@ -1,7 +1,9 @@
 package dev.savant.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -61,6 +63,9 @@ fun FieldGroupCard(
     modifier: Modifier = Modifier,
     changedPaths: Set<String> = emptySet(),
     readOnly: Boolean = false,
+    /** `path → name` from the on device database, applied over whatever the parser called it. */
+    savedNames: Map<String, String> = emptyMap(),
+    onRename: (Node) -> Unit = {},
 ) {
     val colors = Savant.colors
     val editable = group.nodes.filter { it.editable }
@@ -107,6 +112,8 @@ fun FieldGroupCard(
                         readOnly = readOnly,
                         onEdit = onEdit,
                         onQuick = onQuick,
+                        savedName = savedNames[node.path],
+                        onRename = onRename,
                     )
                 }
                 if (editable.size > MAX_ROWS) {
@@ -123,6 +130,7 @@ fun FieldGroupCard(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FieldRow(
     node: Node,
@@ -130,6 +138,8 @@ private fun FieldRow(
     readOnly: Boolean,
     onEdit: (Node, String) -> Unit,
     onQuick: (Node, EditValidator.QuickValue) -> Unit,
+    savedName: String? = null,
+    onRename: (Node) -> Unit = {},
 ) {
     val colors = Savant.colors
     var editing by remember(node.path) { mutableStateOf(false) }
@@ -139,19 +149,36 @@ private fun FieldRow(
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = { onRename(node) },
+                        ),
+                ) {
                     Text(
-                        text = node.label,
+                        text = savedName ?: node.label,
                         style = SavantTypography.bodySmall,
                         color = colors.text,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
-                    if (node.aiGuess != null) Tag(text = "guess", color = colors.accent, emphasis = true)
+                    if (savedName != null) {
+                        Tag(text = "saved", color = colors.textMuted)
+                    } else if (node.aiGuess != null) {
+                        Tag(text = "guess", color = colors.accent, emphasis = true)
+                    }
                 }
                 Text(
-                    text = node.path,
+                    text = if (savedName != null && node.sourceKey != savedName) {
+                        "${node.path} · ${node.sourceKey}"
+                    } else {
+                        node.path
+                    },
                     style = SavantMono.path,
                     color = colors.textFaint,
                     maxLines = 1,

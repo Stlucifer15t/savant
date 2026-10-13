@@ -63,6 +63,24 @@ jobs:
           ls -la app/build/outputs/apk/debug/
           sha256sum app/build/outputs/apk/debug/*.apk
 
+      # Room writes the exported schema during compilation. It belongs in git, so a later version
+      # bump has something to diff against — and the sandbox cannot download artifacts, so this is
+      # how the schema gets back. `[skip ci]` keeps the push from starting another run.
+      - name: commit exported room schema
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/arena/0fa73532-savant'
+        run: |
+          if [ -d app/schemas ]; then
+            git config user.name "savant ci"
+            git config user.email "ci@savant.invalid"
+            git add app/schemas
+            if ! git diff --cached --quiet; then
+              git commit -m "chore: exported room schema [skip ci]"
+              # A rejection here means the branch moved while this run was building; the next push
+              # carries the schema instead. Not worth failing an otherwise green build over.
+              git push origin HEAD:arena/0fa73532-savant || echo "schema push skipped, branch moved"
+            fi
+          fi
+
       - name: upload build artifact
         uses: actions/upload-artifact@v4
         with:

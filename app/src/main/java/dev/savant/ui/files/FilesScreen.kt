@@ -1,5 +1,7 @@
 package dev.savant.ui.files
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -9,21 +11,29 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.savant.data.db.SessionRow
+import dev.savant.data.history.HistoryHit
 import dev.savant.data.storage.Backup
 import dev.savant.data.storage.ImportRecord
+import dev.savant.data.storage.ageSince
 import dev.savant.domain.model.formatBytes
 import dev.savant.ui.components.AccentButton
 import dev.savant.ui.components.FlatIconButton
@@ -33,6 +43,7 @@ import dev.savant.ui.components.SavantPanel
 import dev.savant.ui.components.ScreenTopBar
 import dev.savant.ui.components.SectionLabel
 import dev.savant.ui.components.Tag
+import dev.savant.ui.icons.SavantIcon
 import dev.savant.ui.icons.SavantIcons
 import dev.savant.ui.theme.Savant
 import dev.savant.ui.theme.SavantDimens
@@ -170,8 +181,47 @@ fun FilesScreen(
                 }
             }
 
-            item(key = "note") {
-                EmptyNote("history, sessions and search land in the local database in step 4")
+            item(key = "history-header") {
+                SectionHeader(
+                    "history",
+                    trailing = if (state.history.isNotEmpty()) {
+                        { GhostButton(text = "clear", onClick = viewModel::onClearHistory) }
+                    } else {
+                        null
+                    },
+                )
+                HistorySearchField(query = state.historyQuery, onQuery = viewModel::onHistoryQuery)
+            }
+
+            if (state.hits.isNotEmpty()) {
+                items(state.hits, key = { it.stored.id }) { hit ->
+                    HitRow(
+                        hit = hit,
+                        onView = {
+                            viewModel.onOpenHistory(hit.stored.sessionId)
+                            onOpenChat()
+                        },
+                    )
+                }
+            } else if (state.history.isEmpty()) {
+                item(key = "history-empty") {
+                    EmptyNote("nothing recorded yet — attach a save and its transcript is kept here")
+                }
+            } else {
+                items(state.history, key = { it.id }) { row ->
+                    HistoryRow(
+                        row = row,
+                        onView = {
+                            viewModel.onOpenHistory(row.id)
+                            onOpenChat()
+                        },
+                        onReopen = {
+                            viewModel.onReopenHistory(row)
+                            onOpenChat()
+                        },
+                        onDelete = { viewModel.onDeleteHistory(row.id) },
+                    )
+                }
             }
         }
     }
@@ -278,5 +328,125 @@ private fun EmptyNote(text: String) {
         Hairline()
         Spacer(Modifier.height(8.dp))
         Text(text = text, style = SavantMono.path, color = Savant.colors.textFaint)
+    }
+}
+
+/** Flat search over the stored transcripts. Plain sqlite `like`, no index service, no network. */
+@Composable
+private fun HistorySearchField(query: String, onQuery: (String) -> Unit) {
+    val colors = Savant.colors
+    val shape = RoundedCornerShape(SavantDimens.radius)
+    TextField(
+        value = query,
+        onValueChange = onQuery,
+        singleLine = true,
+        placeholder = { Text("search history", style = SavantMono.path, color = colors.textFaint) },
+        leadingIcon = {
+            SavantIcon(
+                id = SavantIcons.search,
+                size = 15.dp,
+                tint = colors.textMuted,
+                modifier = Modifier.padding(start = 10.dp),
+            )
+        },
+        textStyle = SavantMono.value,
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor = colors.surface,
+            unfocusedContainerColor = colors.surface,
+            disabledContainerColor = colors.surface,
+            focusedIndicatorColor = Color.Transparent,
+            unfocusedIndicatorColor = Color.Transparent,
+            cursorColor = colors.accent,
+            focusedTextColor = colors.text,
+            unfocusedTextColor = colors.text,
+        ),
+        shape = shape,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = SavantDimens.gutter, vertical = 6.dp)
+            .background(colors.surface, shape)
+            .border(SavantDimens.hairline, colors.border, shape),
+    )
+}
+
+/**
+ * One past session.
+ *
+ * `view` opens the transcript as history; `reopen` goes back to the file and starts a new session.
+ * Both are honest about the difference, because a transcript never carries values.
+ */
+@Composable
+private fun HistoryRow(row: SessionRow, onView: () -> Unit, onReopen: () -> Unit, onDelete: () -> Unit) {
+    val colors = Savant.colors
+    SavantPanel(modifier = Modifier.fillMaxWidth().padding(horizontal = SavantDimens.gutter)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = row.fileName,
+                        style = SavantTypography.bodyMedium,
+                        color = colors.text,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Tag(text = row.formatBadge, color = colors.text, emphasis = true)
+                    if (row.readOnly) Tag(text = "read only", color = colors.caution)
+                    if (row.closedAt != null) Tag(text = "closed", color = colors.textFaint)
+                }
+                Text(
+                    text = buildString {
+                        append(ageSince(row.closedAt ?: row.openedAt))
+                        append(" · ")
+                        append(row.nodeCount)
+                        append(" nodes · ")
+                        append(row.editCount)
+                        append(" edit(s)")
+                        if (row.exportCount > 0) append(" · exported")
+                        if (row.backupId != null) append(" · backed up")
+                    },
+                    style = SavantMono.path,
+                    color = colors.textMuted,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            GhostButton(text = "view", icon = SavantIcons.eye, onClick = onView)
+            GhostButton(text = "reopen", icon = SavantIcons.folder, onClick = onReopen)
+            FlatIconButton(icon = SavantIcons.trash, contentDescription = "delete session", onClick = onDelete)
+        }
+    }
+}
+
+/** One transcript line that matched the search, with the file it belonged to. */
+@Composable
+private fun HitRow(hit: HistoryHit, onView: () -> Unit) {
+    val colors = Savant.colors
+    SavantPanel(modifier = Modifier.fillMaxWidth().padding(horizontal = SavantDimens.gutter)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = hit.snippet,
+                    style = SavantMono.value,
+                    color = colors.text,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "${hit.fileName} · ${hit.stored.role ?: "savant"} · ${ageSince(hit.stored.createdAt)}",
+                    style = SavantMono.path,
+                    color = colors.textFaint,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            GhostButton(text = "view", icon = SavantIcons.eye, onClick = onView)
+        }
     }
 }

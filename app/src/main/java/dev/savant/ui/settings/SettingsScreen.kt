@@ -192,12 +192,27 @@ fun SettingsScreen(
                     Hairline()
                     ValueRow(title = "recent imports", value = state.importCount.toString(), subtitle = "uris and metadata only")
                     Hairline()
+                    ValueRow(
+                        title = "history",
+                        value = state.counts.summary,
+                        subtitle = "sessions and messages in an on device database",
+                    )
+                    if (state.counts.namedFields > 0) {
+                        Hairline()
+                        ValueRow(
+                            title = "saved names",
+                            value = state.counts.namedFields.toString(),
+                            subtitle = "labels you gave cryptic keys, reused on the next parse",
+                        )
+                    }
+                    Hairline()
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(12.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         GhostButton(text = "clear backups", onClick = viewModel::onClearBackups)
                         GhostButton(text = "clear imports", onClick = viewModel::onClearImports)
+                        GhostButton(text = "clear history", onClick = viewModel::onClearHistory)
                         Spacer(Modifier.weight(1f))
                         GhostButton(text = "reset", onClick = viewModel::onResetSettings)
                     }

@@ -91,6 +91,18 @@ class SessionStore @Inject constructor(
         _pendingDraft.value = null
     }
 
+    /** Another screen asked the chat to show a past transcript. */
+    private val _pendingTranscript = MutableStateFlow<String?>(null)
+    val pendingTranscript: StateFlow<String?> = _pendingTranscript.asStateFlow()
+
+    fun submitTranscript(sessionId: String) {
+        _pendingTranscript.value = sessionId
+    }
+
+    fun clearTranscript() {
+        _pendingTranscript.value = null
+    }
+
     fun submitShare(uri: Uri?) {
         if (uri != null) _incomingShare.value = uri
     }

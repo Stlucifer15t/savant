@@ -7,6 +7,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.savant.ai.AssistantEngine
 import dev.savant.ai.AssistantInput
 import dev.savant.ai.AssistantReply
+import dev.savant.data.history.ChatHistoryRepository
+import dev.savant.data.history.NamedFieldRepository
 import dev.savant.data.session.OpenReport
 import dev.savant.data.session.SessionStore
 import dev.savant.data.settings.SavantSettings
@@ -23,16 +25,16 @@ import dev.savant.domain.session.EditorSession
 import dev.savant.domain.session.ExportArtifact
 import dev.savant.domain.session.SaveEditor
 import dev.savant.parsers.categorize.Humanizer
-import dev.savant.ui.chat.model.ChatEntry
-import dev.savant.ui.chat.model.ChatRole
-import dev.savant.ui.chat.model.DiffEntry
-import dev.savant.ui.chat.model.DiffStatus
-import dev.savant.ui.chat.model.ExportEntry
-import dev.savant.ui.chat.model.FieldsEntry
-import dev.savant.ui.chat.model.FileEntry
-import dev.savant.ui.chat.model.NoticeEntry
-import dev.savant.ui.chat.model.ParseEntry
-import dev.savant.ui.chat.model.TextEntry
+import dev.savant.domain.chat.ChatEntry
+import dev.savant.domain.chat.ChatRole
+import dev.savant.domain.chat.DiffEntry
+import dev.savant.domain.chat.DiffStatus
+import dev.savant.domain.chat.ExportEntry
+import dev.savant.domain.chat.FieldsEntry
+import dev.savant.domain.chat.FileEntry
+import dev.savant.domain.chat.NoticeEntry
+import dev.savant.domain.chat.ParseEntry
+import dev.savant.domain.chat.TextEntry
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -60,6 +62,11 @@ data class ChatUiState(
     /** Paths already changed in this session: their values render in the accent colour. */
     val changedPaths: Set<String> = emptySet(),
     val engineLabel: String = "on device",
+    /** True while the transcript on screen came out of the database, not the live session. */
+    val restoredHistory: Boolean = false,
+    val historyNote: String? = null,
+    /** `path → name` stored on this device, laid over whatever the parser called the field. */
+    val savedNames: Map<String, String> = emptyMap(),
     val reducedMotion: Boolean = false,
     val showWarning: Boolean = false,
 ) {
@@ -87,7 +94,14 @@ class ChatViewModel @Inject constructor(
     private val assistant: AssistantEngine,
     private val settings: SettingsRepository,
     private val files: SaveFileRepository,
+    private val history: ChatHistoryRepository,
+    private val namedFields: NamedFieldRepository,
 ) : ViewModel() {
+
+    /** The session the transcript on screen belongs to, and where each entry sits in it. */
+    private var sessionId: String? = null
+    private var nextPosition = 0
+    private val positions = mutableMapOf<String, Int>()
 
     private val _state = MutableStateFlow(ChatUiState())
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
@@ -136,6 +150,67 @@ class ChatViewModel @Inject constructor(
             }
         }
         mutate { it.copy(engineLabel = assistant.label) }
+        viewModelScope.launch { restoreLastTranscript() }
+        viewModelScope.launch {
+            namedFields.observe().collect { rows ->
+                val format = sessions.session.value?.format?.name
+                mutate { state ->
+                    state.copy(
+                        savedNames = rows
+                            .filter { format == null || it.format == format }
+                            .associate { it.path to it.displayName },
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            sessions.pendingTranscript.collect { id ->
+                if (id != null) {
+                    sessions.clearTranscript()
+                    loadTranscript(id)
+                }
+            }
+        }
+    }
+
+    /**
+     * Stores a name for a field that shipped without one.
+     *
+     * Display only: the parser still reads and writes the real key, so the save stays byte faithful
+     * and the name comes back next time the same game is opened.
+     */
+    fun onRenameField(node: Node, name: String) {
+        val session = sessions.session.value ?: return
+        viewModelScope.launch { namedFields.remember(session.format, node, name) }
+    }
+
+    /** Opens a past conversation from the Files screen. */
+    private suspend fun loadTranscript(id: String) {
+        val transcript = history.transcript(id)
+        val row = history.sessionById(id)
+        sessionId = id
+        nextPosition = transcript.size
+        positions.clear()
+        transcript.forEachIndexed { index, entry -> positions[entry.id] = index }
+        mutate {
+            it.copy(
+                entries = transcript,
+                restoredHistory = true,
+                historyNote = row?.let { session -> "history · ${session.fileName} · ${session.formatBadge}" },
+            )
+        }
+    }
+
+    /**
+     * Shows the last conversation again on a cold start.
+     *
+     * The file is not reopened: values and exports belong to the file, so a restored field card and
+     * export card say so instead of pretending they are live.
+     */
+    private suspend fun restoreLastTranscript() {
+        val id = history.newestSessionId() ?: return
+        if (history.transcript(id).isEmpty()) return
+        loadTranscript(id)
     }
 
     // ---- input ------------------------------------------------------------------
@@ -187,8 +262,21 @@ class ChatViewModel @Inject constructor(
         setBusy(true)
         viewModelScope.launch {
             val report = sessions.openUri(uri, origin)
+            beginTranscript(report.session?.id)
             render(report)
             setBusy(false)
+        }
+    }
+
+    /** A newly opened file starts a new transcript; the old one stays in the database. */
+    private fun beginTranscript(id: String?) {
+        if (id == null) return
+        sessionId = id
+        nextPosition = 0
+        positions.clear()
+        mutate { it.copy(entries = emptyList(), restoredHistory = false, historyNote = null) }
+        sessions.session.value?.let { session ->
+            viewModelScope.launch { history.recordSession(session) }
         }
     }
 
@@ -197,6 +285,7 @@ class ChatViewModel @Inject constructor(
         setBusy(true)
         viewModelScope.launch {
             val report = sessions.openUri(Uri.parse(uri), ImportedFile.Origin.PICKER)
+            beginTranscript(report.session?.id)
             render(report)
             setBusy(false)
         }
@@ -346,6 +435,9 @@ class ChatViewModel @Inject constructor(
                 sessions.session.value?.let { session -> refreshFieldEntries(session.tree) }
                 assistantText(outcome.lines)
                 if (applied > 0) rebuild(note = entry.note)
+                sessions.session.value?.let { updated ->
+                    viewModelScope.launch { history.updateCounts(updated) }
+                }
             } finally {
                 setBusy(false)
             }
@@ -458,6 +550,7 @@ class ChatViewModel @Inject constructor(
                     assistantText(listOf("that backup is gone"), isError = true)
                     return@launch
                 }
+                beginTranscript(report.session?.id)
                 assistantText(listOf("restored the original and reopened it"))
                 render(report)
             } finally {
@@ -467,6 +560,7 @@ class ChatViewModel @Inject constructor(
     }
 
     fun onCloseFile() {
+        sessionId?.let { id -> viewModelScope.launch { history.closeSession(id) } }
         sessions.close()
         clearPending()
         mutate { it.copy(export = null) }
@@ -498,6 +592,7 @@ class ChatViewModel @Inject constructor(
                 readOnly = session?.readOnly ?: false,
                 readOnlyReason = session?.tree?.readOnlyReason,
                 canUndo = session?.canUndo ?: false,
+                restoredHistory = if (session != null) false else it.restoredHistory,
                 changedPaths = session?.appliedEdits?.map { edit -> edit.path }?.toSet() ?: emptySet(),
                 export = session?.export ?: it.export,
             )
@@ -519,6 +614,7 @@ class ChatViewModel @Inject constructor(
                 },
             )
         }
+        _state.value.entries.filterIsInstance<FieldsEntry>().forEach { persist(it.id) }
     }
 
     private fun assistantText(lines: List<String>, isError: Boolean = false) {
@@ -526,10 +622,27 @@ class ChatViewModel @Inject constructor(
         append(TextEntry(newId(), ChatRole.ASSISTANT, lines, isError = isError))
     }
 
-    private fun append(entry: ChatEntry) = mutate { it.copy(entries = it.entries + entry) }
+    private fun append(entry: ChatEntry) {
+        mutate { it.copy(entries = it.entries + entry) }
+        val id = sessionId ?: return
+        val position = nextPosition++
+        positions[entry.id] = position
+        viewModelScope.launch { history.append(id, entry, position) }
+    }
 
-    private fun replaceEntry(id: String, transform: (ChatEntry) -> ChatEntry) = mutate { state ->
-        state.copy(entries = state.entries.map { if (it.id == id) transform(it) else it })
+    private fun replaceEntry(id: String, transform: (ChatEntry) -> ChatEntry) {
+        mutate { state ->
+            state.copy(entries = state.entries.map { if (it.id == id) transform(it) else it })
+        }
+        persist(id)
+    }
+
+    /** Re-stores one entry after it changed on screen, so history matches what the user saw. */
+    private fun persist(id: String) {
+        val session = sessionId ?: return
+        val position = positions[id] ?: return
+        val entry = _state.value.entries.firstOrNull { it.id == id } ?: return
+        viewModelScope.launch { history.append(session, entry, position) }
     }
 
     private fun clearPending() = mutate { it.copy(pendingDiffId = null, pendingEditCount = 0) }

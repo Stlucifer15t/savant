@@ -1,4 +1,4 @@
-package dev.savant.ui.chat.model
+package dev.savant.domain.chat
 
 import dev.savant.domain.model.Confidence
 import dev.savant.domain.model.FieldEdit
@@ -12,6 +12,9 @@ enum class ChatRole { USER, ASSISTANT }
 
 /**
  * One row in the chat stream.
+ *
+ * Kept in the domain package: entries carry only domain types, which is what lets the history
+ * repository persist them without the data layer depending on the ui layer.
  *
  * The stream is heterogeneous on purpose: savant answers with a file chip, a parse log, field
  * groups, a diff and an export card, not with wall-of-text bubbles. Order in the list is the order
@@ -58,6 +61,10 @@ data class FieldsEntry(
     val totalCount: Int,
     val editableCount: Int,
     val collapsed: Set<String> = emptySet(),
+    /** `currency 3 · stats 12` — what a restored card shows instead of live rows. */
+    val summaryLines: List<String> = emptyList(),
+    /** True when the entry came out of the database: the field list itself is not stored. */
+    val restored: Boolean = false,
     override val atMillis: Long = System.currentTimeMillis(),
 ) : ChatEntry
 
@@ -89,6 +96,8 @@ data class ExportEntry(
     val artifact: ExportArtifact,
     val shared: Boolean = false,
     val savedTo: String? = null,
+    /** True when the card came out of the database: the rebuilt bytes are gone, so export is off. */
+    val restored: Boolean = false,
     override val atMillis: Long = System.currentTimeMillis(),
 ) : ChatEntry
 

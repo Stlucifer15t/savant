@@ -38,6 +38,7 @@ fun ExportCard(
     onSave: () -> Unit,
     modifier: Modifier = Modifier,
     busy: Boolean = false,
+    restored: Boolean = false,
 ) {
     val colors = Savant.colors
     val report = artifact.report
@@ -67,9 +68,17 @@ fun ExportCard(
                 )
             }
             Tag(
-                text = if (report.ok) "verified" else "blocked",
-                color = if (report.ok) colors.positive else colors.negative,
-                emphasis = true,
+                text = when {
+                    restored -> "history"
+                    report.ok -> "verified"
+                    else -> "blocked"
+                },
+                color = when {
+                    restored -> colors.textFaint
+                    report.ok -> colors.positive
+                    else -> colors.negative
+                },
+                emphasis = !restored,
             )
         }
         Hairline()
@@ -112,24 +121,33 @@ fun ExportCard(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Hairline()
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Spacer(Modifier.weight(1f))
-            GhostButton(
-                text = "share",
-                icon = SavantIcons.share,
-                onClick = onShare,
-                enabled = report.ok && !busy,
+        if (restored) {
+            Text(
+                text = "from history — the rebuilt bytes are gone. apply an edit to build a new file.",
+                style = SavantMono.path,
+                color = colors.textFaint,
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 11.dp),
             )
-            GhostButton(
-                text = "save to folder",
-                icon = SavantIcons.download,
-                onClick = onSave,
-                enabled = report.ok && !busy,
-            )
+        } else {
+            Hairline()
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Spacer(Modifier.weight(1f))
+                GhostButton(
+                    text = "share",
+                    icon = SavantIcons.share,
+                    onClick = onShare,
+                    enabled = report.ok && !busy,
+                )
+                GhostButton(
+                    text = "save to folder",
+                    icon = SavantIcons.download,
+                    onClick = onSave,
+                    enabled = report.ok && !busy,
+                )
+            }
         }
     }
 }
