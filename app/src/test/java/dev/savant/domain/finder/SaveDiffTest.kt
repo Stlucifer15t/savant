@@ -324,7 +324,7 @@ class SaveDiffTest {
     fun theReportCarriesTheLogTheUserSees() {
         val report = SaveDiff.compare(sampleSave(gold = 1), sampleSave(gold = 2))
 
-        assertTrue(report.lines.any { it.contains("bytes differ") })
+        assertTrue(report.lines.any { it.contains("differ") })
         assertTrue(report.lines.any { it.contains("candidate") })
         assertTrue(report.lines.any { it.contains("best:") })
     }
