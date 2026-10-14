@@ -32,8 +32,8 @@ enum class SaveFormat(
         label = "ini / cfg",
         badge = "INI",
         extensions = listOf("ini", "cfg", "conf", "properties"),
-        implemented = false,
-        notes = "sections and key=value lines",
+        implemented = true,
+        notes = "sections and key=value lines. comments, spacing, quoting and line endings survive an edit",
     ),
     RPGSAVE(
         label = "rpg maker mv / mz",

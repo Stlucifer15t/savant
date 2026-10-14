@@ -39,6 +39,10 @@ class DetectionAndNamingTest {
         assertFalse(FormatDetector.looksLikeXml("""{"a":1}""".toByteArray()))
         assertTrue(FormatDetector.looksLikeIni("[player]\ngold=5\nhp=1\n".toByteArray()))
         assertFalse(FormatDetector.looksLikeIni("""{"a":1}""".toByteArray()))
+        // unreal's `+Key=` lines and keys with spaces are ini too; prose is not.
+        assertTrue(FormatDetector.looksLikeIni("[/Script/Engine]\n+MapsToCook=(FilePath=\"/Game/A\")\n+MapsToCook=(FilePath=\"/Game/B\")\n".toByteArray()))
+        assertTrue(FormatDetector.looksLikeIni("Player Name=Aric\nPlay Time=12\n".toByteArray()))
+        assertFalse(FormatDetector.looksLikeIni("dear diary\ntoday i found a save file\nit was = to nothing\n".toByteArray()))
     }
 
     @Test

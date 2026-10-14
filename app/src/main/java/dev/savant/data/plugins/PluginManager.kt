@@ -3,6 +3,7 @@ package dev.savant.data.plugins
 import dev.savant.domain.model.SaveFormat
 import dev.savant.domain.parser.ParserRegistry
 import dev.savant.domain.parser.SaveParser
+import dev.savant.parsers.ini.IniSaveParser
 import dev.savant.parsers.json.JsonSaveParser
 import dev.savant.parsers.xml.XmlSaveParser
 import dev.savant.plugins.BinaryPluginParser
@@ -35,6 +36,7 @@ class PluginManager @Inject constructor(
     private val registry: ParserRegistry,
     private val jsonParser: JsonSaveParser,
     private val xmlParser: XmlSaveParser,
+    private val iniParser: IniSaveParser,
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -70,6 +72,7 @@ class PluginManager @Inject constructor(
         PluginParserKind.BINARY -> BinaryPluginParser(plugin)
         PluginParserKind.JSON -> MappedParser(plugin, baseFor(SaveFormat.JSON) ?: jsonParser)
         PluginParserKind.XML -> MappedParser(plugin, baseFor(SaveFormat.XML) ?: xmlParser)
+        PluginParserKind.INI -> MappedParser(plugin, baseFor(SaveFormat.INI) ?: iniParser)
     }
 
     private fun baseFor(format: SaveFormat): SaveParser? =

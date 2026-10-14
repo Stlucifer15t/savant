@@ -18,6 +18,9 @@ enum class PluginParserKind(val id: String, val label: String) {
 
     /** Paths inside an xml or plist file. */
     XML("xml", "xml paths"),
+
+    /** `section.key` paths inside an ini, cfg or properties file. */
+    INI("ini", "ini keys"),
     ;
 
     val baseFormat: SaveFormat
@@ -25,6 +28,7 @@ enum class PluginParserKind(val id: String, val label: String) {
             BINARY -> SaveFormat.BINARY
             JSON -> SaveFormat.JSON
             XML -> SaveFormat.XML
+            INI -> SaveFormat.INI
         }
 
     companion object {

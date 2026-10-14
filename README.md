@@ -24,7 +24,7 @@ byte.
 | 6 | ai providers, profiles, privacy controls | **done** |
 | 7 | plugin runtime: import/export game definitions | **done** |
 | 8 | mcp connectors, web search, fetch | **done** |
-| 9 | lz-string / rpgsave, sqlite, ini, unity plist | planned |
+| 9 | ini, lz-string / rpgsave, sqlite, unity plist | **in progress** — ini done, rpgsave next |
 
 everything below describes what is in the repository today.
 
@@ -43,11 +43,11 @@ git clone <this repo> savant
 cd savant
 ./gradlew :app:assembleDebug        # build
 ./gradlew :app:installDebug         # install on a device or emulator
-./gradlew :app:testDebugUnitTest    # 315 unit tests, pure jvm
+./gradlew :app:testDebugUnitTest    # 344 unit tests, pure jvm
 ```
 
 no android sdk and no route to maven? `tools/jvmcheck/setup.sh` fetches jdk 17 and kotlinc 2.0.21
-from pypi and npm, and `tools/jvmcheck/check.sh` compiles the pure-jvm half with the same 315 tests
+from pypi and npm, and `tools/jvmcheck/check.sh` compiles the pure-jvm half with the same 344 tests
 in about thirty seconds. it is how the sandbox checks its work before ci builds the apk; see
 [testing](#testing).
 
@@ -92,7 +92,8 @@ account banned. it has to be acknowledged once and can be re-read in settings �
 6. **diff** — old value struck through, new value in the accent colour, one revert per row. apply
    or cancel; the resolved card stays in the transcript.
 7. **rebuild** — the parser re-serialises its own document model (whitespace, quoting, entity
-   encoding, attribute order preserved), re-encodes any codec, recomputes any checksum.
+   encoding, attribute order, comments and line endings preserved), re-encodes any codec, recomputes
+   any checksum.
 8. **verify** — the rebuilt bytes are parsed again and every applied edit is checked in the result.
    a file that fails verification cannot be exported.
 9. **export** — share sheet, or save to a folder the user picks (`ACTION_CREATE_DOCUMENT`). the
@@ -162,7 +163,8 @@ app/src/main/java/dev/savant/
 │   ├── FormatDetector.kt    magic bytes, text shape, blockers
 │   ├── categorize/          CategoryClassifier, Humanizer
 │   ├── json/                hand written reader, writer, tree builder, parser, JsonPayload
-│   └── xml/                 hand written reader, writer, values, tree builder, parser
+│   ├── xml/                 hand written reader, writer, values, tree builder, parser
+│   └── ini/                 line model, reader, values, tree builder, parser (writer is concatenation)
 └── ui/
     ├── SavantApp.kt         NavHost + bottom bar
     ├── theme/               colour, type, shape, motion
@@ -245,8 +247,9 @@ trimmed, 200 kb before values are stripped from it.
 7. **test it** in `app/src/test/java/dev/savant/parsers/<format>/`. the bar is a round trip:
    `parse(bytes).document.toBytes()` equals the original bytes for a file savant did not edit, and
    `parse(write(parse(bytes)))` equals `parse(bytes)` after an edit. see
-   `JsonSaveParserTest` and `XmlSaveParserTest` for the pattern, and `CodecRoundTripTest` for two
-   small sample binaries with header and trailer checksums.
+   `IniSaveParserTest` for the smallest complete example, `JsonSaveParserTest` and
+   `XmlSaveParserTest` for the pattern, and `CodecRoundTripTest` for two small sample binaries with
+   header and trailer checksums.
 
 a parser that cannot promise a faithful rebuild should say so: return a tree with `readOnlyReason`
 set. savant opens it read only, shows the values, blocks the diff, and prints the reason — which is
@@ -276,7 +279,7 @@ generated, interpreted as code or given network access. formats → plugins → 
 - `gameName`, `fileMatch` — display name and glob patterns used during detection. `magic` (hex bytes)
   is optional and, with a codec, is matched against the decoded payload. **a plugin that declares
   neither can never match**: savant will not let one claim every binary file on the phone.
-- `parser` — `binary`, `json` or `xml` today; `ini`, `rpgsave`, `sqlite` and `plist` are refused on
+- `parser` — `binary`, `json`, `xml` or `ini` today; `rpgsave`, `sqlite` and `plist` are refused on
   import until step 9 implements them.
 - `codec` — `none`, `gzip`, `zlib`, `xor` (+ `xorKey` as hex). `lzstring` and `aes` arrive with their
   formats. a plugin-declared codec is the only way a compressed file becomes writable; a codec savant
@@ -293,8 +296,9 @@ generated, interpreted as code or given network access. formats → plugins → 
     of records. the value at `pointer` is read as an offset into the payload, minus `pointerBase` for
     games that store a load address. `[*]` in the path becomes the index, and without `count` as many
     records are read as fit, up to 512;
-  - `path` alone, with `parser: json` or `xml` — the file is parsed by savant's own parser and the
-    mapping only adds a name, a category and limits.
+  - `path` alone, with `parser: json`, `xml` or `ini` — the file is parsed by savant's own parser and
+    the mapping only adds a name, a category and limits. ini paths are `section.key`, or `key` for a
+    line above the first section.
 - `type` — `i8`…`u64`, `f32`, `f64`, `bool`, `str`. `str` needs a `length` in bytes; it reads to the
   first NUL and writes NUL padded, and a value too long for the field is **refused**, not truncated.
 - `name`, `category`, `min`, `max`, `editable`, `notes` — per field. `min` and `max` are hard limits
@@ -313,7 +317,7 @@ two kinds of plugin, two kinds of parser:
 | kind | what happens |
 | --- | --- |
 | `binary` | `BinaryPluginParser` decodes the payload, reads every mapping, and on write puts the values back, recomputes the checksum over the payload, and re-encodes. an untouched file comes back byte for byte |
-| `json` / `xml` | `MappedParser` decorates savant's own parser: same bytes, same round trip, plus names, categories and limits. the mapping is re-applied to every tree the document produces, so a name does not vanish after the first edit |
+| `json` / `xml` / `ini` | `MappedParser` decorates savant's own parser: same bytes, same round trip, plus names, categories and limits. the mapping is re-applied to every tree the document produces, so a name does not vanish after the first edit |
 
 for a text format a plugin's claim *adds* to the base parser's confidence instead of competing with
 it — "this is json" and "this is example quest's save" are both true — and a file the plugin does not
@@ -576,7 +580,7 @@ and runs the suite through a 400-line junit 4 stand-in in `tools/jvmcheck/junit-
 is not reachable from the sandbox. it is a pre-push check, not a replacement: ci still runs the real
 junit task and compiles the android half.
 
-315 tests, pure jvm, no robolectric and no android APIs:
+344 tests, pure jvm, no robolectric and no android APIs:
 
 - `domain/model/FieldModelTest` — paths, quoting, value parsing and formatting, types, categories,
   validation, quick values, tree search and normalisation.
@@ -588,6 +592,17 @@ junit task and compiles the android half.
   edit elsewhere leaves their bytes alone, and a truncated sequence still opens.
 - `parsers/xml/XmlSaveParserTest` — prolog, doctype, comments, cdata, attributes, self-closing tags,
   entity escaping, plist dicts, whitespace fidelity, edits and rebuilds.
+- `parsers/ini/IniSaveParserTest` — one deliberately messy sample: crlf, both comment characters,
+  inline comments, `=` and `:`, tabs, quoted values, a duplicate key, a repeated section, an empty
+  value, a continuation line and no final newline. byte-exact round trips with and without a bom,
+  detection with and without an extension and never against json or xml, `section.key` and root
+  paths, unreal-style section names as one segment, `yes`/`no`/`on`/`off` typed as booleans and
+  written back in the file's own spelling and case, quoted values staying strings, duplicate keys
+  suffixed and repeated sections merged, an edit changing only its own bytes, a value that would
+  misread getting quoted, line breaks and quote conflicts refused, type rules and widening, the node
+  cap keeping the file whole, a sniffed gzip opening read only and a declared one writing through,
+  empty and keyless files failing loudly, verification, and an `ini` plugin naming, limiting and
+  claiming only its own files.
 - `domain/session/SaveEditorTest` — the whole step 3 flow: open, propose, apply, reject, undo,
   rebuild, verify, export naming, read-only handling.
 - `ai/LocalAssistantTest` — every command shape, ambiguity, failures, undo, export, the tool
@@ -694,42 +709,48 @@ reasonable choices made without asking, so they are written down:
    rebuild needs, and none of them are unit-testable on the host without android. the readers are
    lenient (bom, single quotes, trailing commas, comments, unquoted keys) and remember the style
    they saw.
-2. **json integers are advisory `INT32`/`INT64`/`UINT64`**, never fixed width: a text format has no
+2. **ini is a list of lines, not a map.** the model is the file's own lines, each with its own
+   terminator, and an entry additionally knows the byte span of its value. an edit splices bytes
+   into that span and nothing else is ever re-serialised, which is what makes the round trip
+   byte-exact by construction rather than by effort — and it is the only reading every ini dialect
+   agrees on. the one thing that changes shape is a bare value that would misread on the way back
+   in (`left ; right`), which is quoted because the alternative is a file that lies.
+3. **json integers are advisory `INT32`/`INT64`/`UINT64`**, never fixed width: a text format has no
    width to preserve, so an edit widens the type instead of being rejected. binary parsers will set
    `fixedWidth = true` and get strict validation.
-3. **a sniffed codec makes a file read only.** if savant did not get the codec from a plugin or a
+4. **a sniffed codec makes a file read only.** if savant did not get the codec from a plugin or a
    hint, it cannot promise the rebuild is identical, so it says so and shows the values anyway. the
    message names the codec to declare.
-4. **the local assistant is a deterministic command parser**, not a model. it keeps steps 1–3
+5. **the local assistant is a deterministic command parser**, not a model. it keeps steps 1–3
    useful with no api key, and it exercises the exact tool path a provider will use later. the
    `AssistantEngine` contract is the seam.
-5. **room was deferred to step 4.** backups and the recent-imports list were file backed
+6. **room was deferred to step 4.** backups and the recent-imports list were file backed
    (`files/backups/<id>/{save.bin,meta.txt}` and `files/imports.txt`) so step 3 had restore without
    a schema. the on-disk layout was deliberately boring so it could be lifted into tables unchanged —
    which is what `LegacyStoreMigration` did, once, in step 4.
-6. **api keys lived in memory only until step 6.** `SecretStore` is still the interface every screen
+7. **api keys lived in memory only until step 6.** `SecretStore` is still the interface every screen
    talks to; `EncryptedSecretStore` is the keystore-backed implementation behind it, and the
    process-scoped map is what it falls back to when the keystore refuses. every surface shows a
    masked value either way.
-7. **icons are feather-derived vector drawables** rather than `material-icons-extended` (a 7 000-icon
+8. **icons are feather-derived vector drawables** rather than `material-icons-extended` (a 7 000-icon
    dependency for ~50 glyphs) or lucide (not fetchable in this environment, same design lineage).
-8. **fonts are bundled ttfs** rather than downloadable fonts: savant has to look identical offline
+9. **fonts are bundled ttfs** rather than downloadable fonts: savant has to look identical offline
    and on devices without the play services font provider.
-9. **`org.jetbrains.kotlin.plugin.serialization` is deliberately absent.** there is no runtime
-   serialization jar in the pinned set and nothing needs it: the plugin document, the profile set,
-   the connector store and every provider body go through savant's own `JsonPayload`, which is the
-   same hand-written reader the parsers use.
-10. **document caps** — 1 000 000 json/xml values and 25 000 field nodes. a phone has to stay
+10. **`org.jetbrains.kotlin.plugin.serialization` is deliberately absent.** there is no runtime
+    serialization jar in the pinned set and nothing needs it: the plugin document, the profile set,
+    the connector store and every provider body go through savant's own `JsonPayload`, which is the
+    same hand-written reader the parsers use.
+11. **document caps** — 1 000 000 json/xml values or ini lines, and 25 000 field nodes. a phone has to stay
     responsive, and a save that big is a database, not a save.
-11. **exports always use `application/octet-stream`** in `ACTION_CREATE_DOCUMENT`; the file name
+12. **exports always use `application/octet-stream`** in `ACTION_CREATE_DOCUMENT`; the file name
     still carries the right extension, and a per-mime contract instance would have to be recreated
     on every launch.
-12. **toolchain pinned to what could be verified to exist.** newer releases (kotlin 2.4.x, gradle
+13. **toolchain pinned to what could be verified to exist.** newer releases (kotlin 2.4.x, gradle
     9.x, dagger 2.60) exist but were not resolvable here, so the build uses versions that are known
     to be on google maven and maven central.
-13. **the app is built in ci, not in the dev sandbox.** the sandbox has no android sdk and no
+14. **the app is built in ci, not in the dev sandbox.** the sandbox has no android sdk and no
     access to google maven, so the jvm half (domain, parsers, codecs, plugins, mcp, ai and their
-    315 tests) is compiled and run with kotlinc and a stub junit runner — `tools/jvmcheck`, checked
+    344 tests) is compiled and run with kotlinc and a stub junit runner — `tools/jvmcheck`, checked
     in so the next session does not rebuild it — and the android half is written against stable,
     non-experimental material 3 apis. `.github/workflows/build-apk.yml` is the compiler of record:
     it builds the apk, publishes it, then runs the tests, on every push to any `arena/**` branch,
@@ -740,59 +761,59 @@ reasonable choices made without asking, so they are written down:
     the sandbox cannot reach, a failing build pushes its own gradle log to the `ci-logs` branch
     (`.ci/build.log`), which is readable through the ordinary contents api. a failing *test* also
     pushes the junit xml messages, because gradle's console line is only `AssertionError at File.kt:12`.
-14. **history stores text, not values.** see [the local database](#the-local-database). the
+15. **history stores text, not values.** see [the local database](#the-local-database). the
     alternative — snapshotting the field tree per message — would make a transcript a second copy of
     every save on the phone and would show numbers that no longer match the file.
-15. **a byte-based reader still has to decode utf-8 for values.** the json reader works on bytes so
+16. **a byte-based reader still has to decode utf-8 for values.** the json reader works on bytes so
     an untouched file is written back identically, and it originally turned each byte into a char.
     for ascii that is the same thing; for `José` it produced mojibake that was then re-encoded as
     nine bytes the moment any field in that file was edited. string values now decode real utf-8
     sequences, with overlong forms, surrogates and truncated sequences falling back to the raw byte.
-16. **named fields are display only.** a saved name is laid over the parsed tree in the ui; the
+17. **named fields are display only.** a saved name is laid over the parsed tree in the ui; the
     parser still reads and writes the real key, so a renamed field never changes the bytes.
-17. **the finder interprets only the bytes that differ.** the obvious implementation — read every
+18. **the finder interprets only the bytes that differ.** the obvious implementation — read every
     offset as every type — is 800 million reads on a 50 mb file and mostly noise; two saves of one
     game differ in a handful of places, so that is all savant looks at. a single file scan is the
     exception, and it is bounded by the value being searched for.
-18. **a candidate's reasons are part of the result, not a debug aid.** the ranking is a set of
+19. **a candidate's reasons are part of the result, not a debug aid.** the ranking is a set of
     heuristics, and heuristics are only useful if the user can see which ones fired and disagree
     with them. `Candidate.reasons` is rendered next to the percentage.
-19. **float readings are judged on both sides of the change.** four bytes of a small integer read as
+20. **float readings are judged on both sides of the change.** four bytes of a small integer read as
     a little endian float32 come out as a denormal (120 is 1.6e-43), and no game stores one on
     purpose. without that rule a float misreading of the gold counter outranked the gold counter.
-20. **no http client dependency.** savant makes a handful of json posts per turn, so the transport is
+21. **no http client dependency.** savant makes a handful of json posts per turn, so the transport is
     `HttpURLConnection` behind a one method interface. that keeps the pinned dependency set small and
     the whole provider layer testable against a fake.
-21. **a protocol is data in, data out.** `ProviderProtocol` builds an `HttpCall` and reads an
+22. **a protocol is data in, data out.** `ProviderProtocol` builds an `HttpCall` and reads an
     `HttpResult`, with no i/o of its own, so the request and response shapes of three providers are
     unit tests rather than things discovered against a live api at 2am.
-22. **a half configured profile fails loudly.** falling back to the on device engine when a key is
+23. **a half configured profile fails loudly.** falling back to the on device engine when a key is
     missing would be kinder to the code and worse for the person: they configured a provider, asked a
     question, and got an answer from something else. savant says what is missing instead.
-23. **a plugin is data.** there is no script, no bytecode, no expression language and no fetch: a
+24. **a plugin is data.** there is no script, no bytecode, no expression language and no fetch: a
     plugin says where the fields are, and the same deterministic kotlin that reads savant's own
     formats does the reading and writing. that is why importing one cannot execute anything, and why
     the whole runtime is unit tested on the host.
-24. **a mapped plugin re-applies itself to every tree the document produces.** decorating the parse
+25. **a mapped plugin re-applies itself to every tree the document produces.** decorating the parse
     result once would show the plugin's names for one frame and lose them at the first edit, because
     the base document hands back its own tree. the mapping is a function of the tree, applied on the
     way out.
-25. **a plugin's limits are enforced, not displayed.** a mapped document validates against the mapped
+26. **a plugin's limits are enforced, not displayed.** a mapped document validates against the mapped
     tree before handing an edit to the base parser, so `max` and `editable: false` are rules. the base
     parser only knows the file's own limits, and without this a plugin's maximum would be decoration.
-26. **no mcp sdk dependency.** remote-only mcp is `initialize`, `tools/list` and `tools/call` over a
+27. **no mcp sdk dependency.** remote-only mcp is `initialize`, `tools/list` and `tools/call` over a
     transport savant already had, plus sse unwrapping — about two hundred lines that run in a unit
     test against a fake. a sdk would have added a dependency, a version to track, and stdio support
     savant does not want and would have to disable.
-27. **confirmation is per call, not per session.** approving one fetch does not approve the next one,
+28. **confirmation is per call, not per session.** approving one fetch does not approve the next one,
     and the card stays in the transcript so a conversation shows what was allowed to leave the device.
-28. **web and connector output is marked untrusted where it is produced**, not where it is rendered.
+29. **web and connector output is marked untrusted where it is produced**, not where it is rendered.
     the wrapper travels with the text into the prompt, so a model cannot be told by a web page that
     the rule does't apply.
-29. **a connector's tools are cached, and the cache is the contract.** "what can the model call" has to
+30. **a connector's tools are cached, and the cache is the contract.** "what can the model call" has to
     be answerable synchronously to build a prompt, and answering it with a network call would mean a
     handshake before every message.
-30. **the cleartext gate lives in code, not in the platform config.** android can allow or forbid
+31. **the cleartext gate lives in code, not in the platform config.** android can allow or forbid
     cleartext per *domain*, and a local model box is an ip address, not a domain. so the platform is
     told cleartext is permitted and `NetworkPolicy` refuses every http url that is not on the phone's
     own network — a rule with tests, rather than a config nobody can express.
@@ -804,6 +825,12 @@ reasonable choices made without asking, so they are written down:
 - json is byte-exact for compact and uniformly indented inputs. a file that mixes indentation styles
   comes back normalised to its dominant style.
 - xml round trips byte-exactly except for whitespace *inside* tags, which is normalised on write.
+- ini round trips byte-exactly, full stop — but ini is a folk format, so the reading is a set of
+  choices: the separator is the first `=` or `:` on the line (a bare `C:\path` line reads as key
+  `C`), an inline comment needs a blank before its `;` or `#`, section and key names are case
+  sensitive and never split on `.` or `/`, a value is typed from its literal so `007` is the integer
+  7 and comes back as `7` once edited, and there is no line continuation or escape handling: a
+  value is one line.
 - a `MAX` shortcut on a value with no declared maximum uses `2147483647`; a binary parser with a
   real type will use its own range.
 - the byte finder ranks, it does not know. a candidate is a proposal with its reasons attached; the

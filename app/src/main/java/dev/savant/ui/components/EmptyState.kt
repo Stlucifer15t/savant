@@ -12,6 +12,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import dev.savant.R
+import dev.savant.domain.model.SaveFormat
 import dev.savant.ui.icons.SavantIcons
 import dev.savant.ui.theme.Savant
 import dev.savant.ui.theme.SavantDimens
@@ -62,11 +63,27 @@ fun EmptyState(
                 enabled = !busy,
             )
             Text(
-                text = "json and xml parse today · rpgsave, sqlite, ini and raw binary arrive in later steps",
+                text = formatsLine(),
                 style = SavantMono.tag,
                 color = colors.textFaint,
                 textAlign = TextAlign.Center,
             )
         }
+    }
+}
+
+/**
+ * "json, xml, ini parse today · rpgsave, sqlite, plist arrive in later steps · binary needs a plugin".
+ * Read from [SaveFormat] so the line cannot say a format is coming after it has arrived.
+ */
+private fun formatsLine(): String {
+    val ready = SaveFormat.entries.filter { it.implemented }.joinToString(", ") { it.badge.lowercase() }
+    val planned = SaveFormat.entries
+        .filter { !it.implemented && it != SaveFormat.UNKNOWN && it != SaveFormat.BINARY }
+        .joinToString(", ") { it.badge.lowercase() }
+    return buildString {
+        append(ready).append(" parse today")
+        if (planned.isNotEmpty()) append(" · ").append(planned).append(" arrive in later steps")
+        append(" · binary needs an offset plugin")
     }
 }

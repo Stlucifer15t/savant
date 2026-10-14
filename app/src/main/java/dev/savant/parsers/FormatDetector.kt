@@ -169,6 +169,14 @@ object FormatDetector {
         return c == ' ' || c == '\n' || c == '\r' || c == '\t'
     }
 
+    /**
+     * What a key looks like before `=` or `:`. Wider than a c identifier on purpose: unreal writes
+     * `+MapsToCook=`, windows games write `Player Name=`, and both are ini files. Prose still fails
+     * this often enough that the three-quarters rule above holds.
+     */
     private fun String.isIniKey(): Boolean =
-        isNotEmpty() && length <= 64 && all { it.isLetterOrDigit() || it == '_' || it == '-' || it == '.' }
+        isNotEmpty() && length <= 96 && !first().isWhitespace() &&
+            all { it.isLetterOrDigit() || it == ' ' || it in INI_KEY_PUNCTUATION }
+
+    private const val INI_KEY_PUNCTUATION = "_-.+/@\$%~"
 }

@@ -8,6 +8,7 @@ import dev.savant.ai.ToolExecutor
 import dev.savant.domain.parser.ExportVerifier
 import dev.savant.domain.parser.ParserRegistry
 import dev.savant.domain.session.SaveEditor
+import dev.savant.parsers.ini.IniSaveParser
 import dev.savant.parsers.json.JsonSaveParser
 import dev.savant.parsers.xml.XmlSaveParser
 import kotlinx.coroutines.CoroutineDispatcher
@@ -51,13 +52,18 @@ object CoreModule {
     @Singleton
     fun xmlSaveParser(): XmlSaveParser = XmlSaveParser()
 
+    @Provides
+    @Singleton
+    fun iniSaveParser(): IniSaveParser = IniSaveParser()
+
     /**
      * The parsers savant ships. Plugin parsers are added to this registry at runtime by
      * [dev.savant.data.plugins.PluginManager]; a plugin replaces nothing here, it registers beside it.
      */
     @Provides
     @Singleton
-    fun parserRegistry(json: JsonSaveParser, xml: XmlSaveParser): ParserRegistry = ParserRegistry(listOf(json, xml))
+    fun parserRegistry(json: JsonSaveParser, xml: XmlSaveParser, ini: IniSaveParser): ParserRegistry =
+        ParserRegistry(listOf(json, xml, ini))
 
     @Provides
     @Singleton
